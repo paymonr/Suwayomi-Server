@@ -70,6 +70,7 @@ class MangaType(
                 .getDataLoader<Int, ChapterNodeList>(
                     "ChaptersForMangaDataLoader",
                 )?.clear(mangaId)
+            dataFetchingEnvironment.getDataLoader<Int, Int>("ChapterCountForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, List<MangaMetaType>>("MangaMetaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, CategoryNodeList>("CategoriesForMangaDataLoader")?.clear(mangaId)
         }
@@ -153,8 +154,17 @@ class MangaType(
     fun highestNumberedChapter(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<ChapterType?> =
         dataFetchingEnvironment.getValueFromDataLoader("HighestNumberedChapterForMangaDataLoader", id)
 
-    fun chapters(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<ChapterNodeList> =
-        dataFetchingEnvironment.getValueFromDataLoader<Int, ChapterNodeList>("ChaptersForMangaDataLoader", id)
+    fun chapters(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<ChapterNodeList> {
+        val onlyCount =
+            dataFetchingEnvironment.selectionSet.immediateFields.all { it.name == "totalCount" || it.name == "__typename" }
+        if (onlyCount) {
+            return dataFetchingEnvironment
+                .getDataLoader<Int, Int>("ChapterCountForMangaDataLoader")!!
+                .load(id)
+                .thenApply { ChapterNodeList.countOnly(it) }
+        }
+        return dataFetchingEnvironment.getDataLoader<Int, ChapterNodeList>("ChaptersForMangaDataLoader")!!.load(id)
+    }
 
     fun age(): Long? {
         if (lastFetchedAt == null) return null

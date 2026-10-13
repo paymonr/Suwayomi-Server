@@ -51,6 +51,7 @@ class ChapterType(
         ) {
             dataFetchingEnvironment.getDataLoader<Int, ChapterType>("ChapterDataLoader")?.clear(chapterId)
             dataFetchingEnvironment.getDataLoader<Int, ChapterNodeList>("ChaptersForMangaDataLoader")?.clear(mangaId)
+            dataFetchingEnvironment.getDataLoader<Int, Int>("ChapterCountForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, Int>("DownloadedChapterCountForMangaDataLoader")?.clear(mangaId)
             dataFetchingEnvironment.getDataLoader<Int, ChapterType>("LastReadChapterForMangaDataLoader")?.clear(mangaId)
         }
@@ -114,6 +115,9 @@ data class ChapterNodeList(
     ) : Edge()
 
     companion object {
+        /** totalCount only; for queries that ask for nothing else, so no chapter rows are loaded. */
+        fun countOnly(count: Int): ChapterNodeList = emptyList<ChapterType>().toNodeList().copy(totalCount = count)
+
         fun List<ChapterType>.toNodeList(): ChapterNodeList =
             ChapterNodeList(
                 nodes = this,

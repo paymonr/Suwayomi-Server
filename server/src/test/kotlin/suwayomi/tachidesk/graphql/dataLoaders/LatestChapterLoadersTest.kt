@@ -32,4 +32,6 @@ class LatestChapterLoadersTest : ApplicationTest() {
     @Test fun `first unread`() = assertEquals(listOf(3, 1, null, null), sourceOrders(FirstUnreadChapterForMangaDataLoader()))
 
     @Test fun `highest numbered`() = assertEquals(listOf(4, 1, null, null), sourceOrders(HighestNumberedChapterForMangaDataLoader()))
+
+    @Test fun `chapter count`() = assertEquals(listOf(4, 1, 0, 0), ChapterLoaderFixture.load(ChapterCountForMangaDataLoader(), keys))
 }

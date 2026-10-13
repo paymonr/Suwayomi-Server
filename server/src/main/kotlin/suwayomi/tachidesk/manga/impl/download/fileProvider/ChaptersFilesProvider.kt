@@ -3,12 +3,6 @@ package suwayomi.tachidesk.manga.impl.download.fileProvider
 import eu.kanade.tachiyomi.source.local.metadata.COMIC_INFO_FILE
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.sample
 import libcore.net.MimeUtils
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.jetbrains.exposed.v1.core.eq
@@ -98,7 +92,6 @@ abstract class ChaptersFilesProvider<Type : FileType>(
 
     protected abstract suspend fun handleSuccessfulDownload()
 
-    @OptIn(FlowPreview::class)
     private suspend fun downloadImpl(
         download: DownloadQueueItem,
         scope: CoroutineScope,
@@ -133,47 +126,29 @@ abstract class ChaptersFilesProvider<Type : FileType>(
         val downloadCacheFolder = File(cacheChapterDir)
         downloadCacheFolder.mkdirs()
 
-        for (pageNum in 0 until pageCount) {
-            var pageProgressJob: Job? = null
-            val fileName = Page.getPageName(pageNum, pageCount) // might have to change this to index stored in database
-
-            val pageExistsInFinalDownloadFolder = ImageResponse.findFileNameStartingWith(finalDownloadFolder, fileName) != null
-            val pageExistsInCacheDownloadFolder = ImageResponse.findFileNameStartingWith(cacheChapterDir, fileName) != null
-
-            val doesPageAlreadyExist = pageExistsInFinalDownloadFolder || pageExistsInCacheDownloadFolder
-            if (doesPageAlreadyExist) {
-                continue
-            }
-
-            try {
-                Page
-                    .getPageImageDownload(
-                        mangaId = download.mangaId,
-                        chapterId = download.chapterId,
-                        index = pageNum,
-                        downloadCacheFolder,
-                        fileName,
-                    ) { flow ->
-                        pageProgressJob =
-                            flow
-                                .sample(100)
-                                .distinctUntilChanged()
-                                .onEach {
-                                    download.progress = (pageNum.toFloat() + (it.toFloat() * 0.01f)) / pageCount
-                                    step(
-                                        null,
-                                        false,
-                                    ) // don't throw on canceled download here since we can't do anything
-                                }.launchIn(scope)
-                    }
-            } finally {
-                // always cancel the page progress job even if it throws an exception to avoid memory leaks
-                pageProgressJob?.cancel()
-            }
-            // TODO: retry on error with 2,4,8 seconds of wait
-            download.progress = ((pageNum + 1).toFloat()) / pageCount
-            step(download, false)
-        }
+        downloadPagesInParallel(
+            pageCount = pageCount,
+            parallelism = ForkDownloadSettings.parallelPages,
+            isDone = { pageNum ->
+                val fileName = Page.getPageName(pageNum, pageCount)
+                ImageResponse.findFileNameStartingWith(finalDownloadFolder, fileName) != null ||
+                    ImageResponse.findFileNameStartingWith(cacheChapterDir, fileName) != null
+            },
+            download = { pageNum ->
+                // per-page byte progress isn't reported while pages run in parallel; progress moves per finished page
+                Page.getPageImageDownload(
+                    mangaId = download.mangaId,
+                    chapterId = download.chapterId,
+                    index = pageNum,
+                    downloadCacheFolder,
+                    Page.getPageName(pageNum, pageCount),
+                ) { }
+            },
+            onPageDone = { finishedPages ->
+                download.progress = finishedPages.toFloat() / pageCount
+                step(download, false)
+            },
+        )
 
         createComicInfoFile(
             downloadCacheFolder.toPath(),

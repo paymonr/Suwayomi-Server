@@ -20,6 +20,7 @@ import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.server.ApplicationDirs
 import uy.kohesive.injekt.injectLazy
 import java.io.File
+import java.io.FilterInputStream
 import java.io.InputStream
 import java.util.zip.Deflater
 
@@ -29,17 +30,25 @@ class ArchiveProvider(
     mangaId: Int,
     chapterId: Int,
 ) : ChaptersFilesProvider<FileType.ZipFile>(mangaId, chapterId) {
-    override suspend fun getImageFiles(): List<FileType.ZipFile> {
-        val zipFile = ZipFile.builder().setFile(getChapterCbzPath(mangaId, chapterId)).get()
-        return zipFile.entries.toList().map { FileType.ZipFile(it) }
-    }
+    // resolved once per provider: every lookup runs several database queries
+    private var cbzPath: String? = null
 
-    override suspend fun getImageInputStream(image: FileType.ZipFile): InputStream =
-        ZipFile
-            .builder()
-            .setFile(getChapterCbzPath(mangaId, chapterId))
-            .get()
-            .getInputStream(image.entry)
+    private suspend fun cbzPath(): String = cbzPath ?: getChapterCbzPath(mangaId, chapterId).also { cbzPath = it }
+
+    private fun openCbz(path: String): ZipFile = ZipFile.builder().setFile(path).get()
+
+    override suspend fun getImageFiles(): List<FileType.ZipFile> =
+        openCbz(cbzPath()).use { zipFile -> zipFile.entries.toList().map { FileType.ZipFile(it) } }
+
+    override suspend fun getImageInputStream(image: FileType.ZipFile): InputStream {
+        val zipFile = openCbz(cbzPath())
+        return try {
+            ArchiveEntryInputStream(zipFile.getInputStream(image.entry), zipFile)
+        } catch (e: Throwable) {
+            zipFile.close()
+            throw e
+        }
+    }
 
     override suspend fun extractExistingDownload() {
         val outputFile = File(getChapterCbzPath(mangaId, chapterId))
@@ -138,5 +147,19 @@ class ArchiveProvider(
             }
         }
         cbzFile.delete()
+    }
+}
+
+/** A page stream that owns its archive: closing the page closes the CBZ. */
+private class ArchiveEntryInputStream(
+    entry: InputStream,
+    private val zipFile: ZipFile,
+) : FilterInputStream(entry) {
+    override fun close() {
+        try {
+            super.close()
+        } finally {
+            zipFile.close()
+        }
     }
 }

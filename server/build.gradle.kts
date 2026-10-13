@@ -102,6 +102,8 @@ dependencies {
     implementation(kotlin("script-runtime"))
 
     testImplementation(libs.mockk)
+    testImplementation(libs.embedded.postgres)
+    testImplementation(platform(libs.embedded.postgres.binaries.bom))
 
     implementation(libs.cron4j)
 

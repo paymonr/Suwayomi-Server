@@ -199,6 +199,15 @@ tasks {
     }
 
     test {
+        // pin the data root for the whole test JVM: ConfigManager fixes its server.conf path when first created,
+        // which can happen before ApplicationTest sets this, and it would then write settings under the user's real data dir
+        systemProperty(
+            "suwayomi.tachidesk.config.server.rootDir",
+            layout.buildDirectory
+                .dir("tmp/TestDesk")
+                .get()
+                .asFile.absolutePath,
+        )
         useJUnitPlatform {
             if (!project.hasProperty("masstest")) {
                 exclude("**/masstest/*")

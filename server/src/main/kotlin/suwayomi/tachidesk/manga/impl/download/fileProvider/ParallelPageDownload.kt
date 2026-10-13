@@ -1,5 +1,6 @@
 package suwayomi.tachidesk.manga.impl.download.fileProvider
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -7,6 +8,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /** Fork-only: how many pages of one chapter the downloader fetches at once. `-Dsuwayomi.fork.downloadParallelPages=N`, 1–8. */
 object ForkDownloadSettings {
@@ -38,9 +41,16 @@ suspend fun downloadPagesInParallel(
         missing
             .map { pageIndex ->
                 async {
-                    permits.withPermit { download(pageIndex) }
+                    // page work blocks (JDBC, socket reads, file writes): keep it off the shared Default pool
+                    permits.withPermit { withContext(Dispatchers.IO) { download(pageIndex) } }
                     progressLock.withLock { onPageDone(++finished) }
                 }
             }.awaitAll()
     }
 }
+
+/** Whether a finished file exists for [fileName] in [folder]. A "<page>.tmp" is an interrupted download, not a page. */
+fun isPageFilePresent(
+    folder: String,
+    fileName: String,
+): Boolean = File(folder).listFiles().orEmpty().any { it.name.startsWith("$fileName.") && !it.name.endsWith(".tmp") }

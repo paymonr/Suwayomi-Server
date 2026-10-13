@@ -10,7 +10,10 @@ import java.io.BufferedReader
 const val MainClass = "suwayomi.tachidesk.MainKt"
 
 // should be bumped with each stable release
-val getTachideskVersion = { "v2.4.${getCommitCount()}" }
+// fork: report the upstream base version, so WebUI/server compatibility checks (WebInterfaceManager) match what
+// this fork actually contains; fork builds are told apart by the revision (r<commit count>-fork)
+const val FORK_BASE_VERSION = "v2.4.2366"
+val getTachideskVersion = { FORK_BASE_VERSION }
 
 val webUIRevisionTag = "r3518"
 

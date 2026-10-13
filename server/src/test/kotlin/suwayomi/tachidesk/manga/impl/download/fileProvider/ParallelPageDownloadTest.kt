@@ -1,11 +1,15 @@
 package suwayomi.tachidesk.manga.impl.download.fileProvider
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.ContinuationInterceptor
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -81,4 +85,14 @@ class ParallelPageDownloadTest {
             System.clearProperty(key)
         }
     }
+
+    @Test
+    fun `page downloads run on the IO dispatcher`() =
+        runTest {
+            val interceptors = Collections.synchronizedList(mutableListOf<CoroutineContext.Element?>())
+            downloadPagesInParallel(3, parallelism = 2, isDone = { false }, download = {
+                interceptors += currentCoroutineContext()[ContinuationInterceptor]
+            }, onPageDone = {})
+            assertEquals(List(3) { Dispatchers.IO }, interceptors.toList())
+        }
 }

@@ -17,7 +17,6 @@ import suwayomi.tachidesk.manga.impl.util.createComicInfoFile
 import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.getChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
-import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import java.io.File
@@ -131,8 +130,7 @@ abstract class ChaptersFilesProvider<Type : FileType>(
             parallelism = ForkDownloadSettings.parallelPages,
             isDone = { pageNum ->
                 val fileName = Page.getPageName(pageNum, pageCount)
-                ImageResponse.findFileNameStartingWith(finalDownloadFolder, fileName) != null ||
-                    ImageResponse.findFileNameStartingWith(cacheChapterDir, fileName) != null
+                isPageFilePresent(finalDownloadFolder, fileName) || isPageFilePresent(cacheChapterDir, fileName)
             },
             download = { pageNum ->
                 // per-page byte progress isn't reported while pages run in parallel; progress moves per finished page

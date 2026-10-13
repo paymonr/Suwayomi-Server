@@ -15,6 +15,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.v1.core.DatabaseConfig
 import org.jetbrains.exposed.v1.core.ExperimentalKeywordApi
 import org.jetbrains.exposed.v1.jdbc.Database
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.junit.jupiter.api.BeforeAll
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -172,6 +173,8 @@ open class ApplicationTest {
             // in-memory database, don't discard database between connections/transactions
             val db = Database.connect("jdbc:h2:mem:test;DB_CLOSE_DELAY=-1;", "org.h2.Driver", databaseConfig = dbConfig)
 
+            // explicit default: other tests connect throwaway databases, and Exposed falls back to the newest one
+            TransactionManager.defaultDatabase = db
             databaseUp(db)
 
             LocalSource.register()

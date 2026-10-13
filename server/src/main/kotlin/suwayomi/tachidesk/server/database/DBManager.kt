@@ -23,6 +23,7 @@ import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.graphql.types.DatabaseType
 import suwayomi.tachidesk.server.ApplicationDirs
 import suwayomi.tachidesk.server.ServerConfig
+import suwayomi.tachidesk.server.database.fork.ForkSchema
 import suwayomi.tachidesk.server.serverConfig
 import suwayomi.tachidesk.server.util.ExitCode
 import suwayomi.tachidesk.server.util.shutdownApp
@@ -187,6 +188,7 @@ fun databaseUp(givenDb: Database? = null) {
         }
         val migrations = loadMigrationsFrom("suwayomi.tachidesk.server.database.migration", ServerConfig::class.java)
         runMigrations(migrations)
+        ForkSchema.apply()
     } catch (e: Exception) {
         logger.error(e) { "Error up-to-database migration" }
         shutdownApp(ExitCode.DbMigrationFailure)

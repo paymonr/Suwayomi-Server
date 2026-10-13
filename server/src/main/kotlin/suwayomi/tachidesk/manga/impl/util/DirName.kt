@@ -174,6 +174,11 @@ suspend fun updateChapterDownloadDir(
         return false
     }
 
+    // the folder name comes only from name and scanlator; if neither changed there's nothing to rename
+    if (oldChapter.name == newChapter.name && oldChapter.scanlator == newChapter.scanlator) {
+        return true
+    }
+
     return mutexByManga.getOrPut(oldChapter.mangaId) { Mutex() }.withLock {
         val currentDownloadDir = getChapterDownloadPath(oldChapter.mangaId, oldChapter.name, oldChapter.scanlator)
         val newDownloadDir = getChapterDownloadPath(oldChapter.mangaId, newChapter.name, newChapter.scanlator)

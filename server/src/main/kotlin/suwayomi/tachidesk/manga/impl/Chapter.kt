@@ -169,6 +169,10 @@ object Chapter {
                     .toList()
             }
 
+        val chaptersInDbById = chaptersInDb.associateBy { it.id }
+        // first stored row per URL, like the find() this replaces
+        val chaptersInDbByUrl = LinkedHashMap<String, ChapterDataClass>().apply { chaptersInDb.forEach { putIfAbsent(it.url, it) } }
+
         // new chapters after they have been added to the database for auto downloads
         val insertedChapterIds = mutableListOf<Int>()
 
@@ -176,7 +180,7 @@ object Chapter {
         val chaptersToUpdate = mutableListOf<ChapterDataClass>()
 
         uniqueChapters.reversed().forEachIndexed { index, fetchedChapter ->
-            val chapterEntry = chaptersInDb.find { it.url == fetchedChapter.url }
+            val chapterEntry = chaptersInDbByUrl[fetchedChapter.url]
 
             val chapterData =
                 ChapterDataClass.fromSChapter(
@@ -303,13 +307,14 @@ object Chapter {
                 }
             }
 
-            if (chaptersToUpdate.isNotEmpty()) {
+            val changedChapters = chaptersToUpdate.filter { chaptersInDbById.getValue(it.id).differsInSyncedFields(it) }
+            if (changedChapters.isNotEmpty()) {
                 BatchUpdateStatement(ChapterTable)
                     .apply {
-                        chaptersToUpdate.forEach {
+                        changedChapters.forEach {
                             addBatch(EntityID(it.id, ChapterTable))
 
-                            val currentChapter = chaptersInDb.find { dbChapter -> dbChapter.id == it.id }!!
+                            val currentChapter = chaptersInDbById.getValue(it.id)
 
                             this[ChapterTable.name] = it.name
                             this[ChapterTable.date_upload] = it.uploadDate

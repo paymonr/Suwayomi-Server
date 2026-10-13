@@ -33,5 +33,6 @@ private val getCommitCount = {
 }
 
 // counts commits on the current checked out branch
-val getTachideskRevision = { "r${getCommitCount()}" }
+// fork marker: shows in the WebUI's About page and aboutServer.revision; the version string stays numeric
+val getTachideskRevision = { "r${getCommitCount()}-fork" }
 

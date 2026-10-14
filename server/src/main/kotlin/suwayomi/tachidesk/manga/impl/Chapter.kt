@@ -36,7 +36,7 @@ import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.manga.impl.download.DownloadManager
 import suwayomi.tachidesk.manga.impl.download.DownloadManager.EnqueueInput
 import suwayomi.tachidesk.manga.impl.track.Track
-import suwayomi.tachidesk.manga.impl.util.updateChapterDownloadDir
+import suwayomi.tachidesk.manga.impl.util.ChapterDownloadDirs
 import suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass
 import suwayomi.tachidesk.manga.model.dataclass.MangaChapterDataClass
 import suwayomi.tachidesk.manga.model.dataclass.PaginatedList
@@ -170,6 +170,7 @@ object Chapter {
             }
 
         val chaptersInDbById = chaptersInDb.associateBy { it.id }
+        val downloadDirs = ChapterDownloadDirs(mangaEntry[MangaTable.id].value)
         // first stored row per URL, like the find() this replaces
         val chaptersInDbByUrl = LinkedHashMap<String, ChapterDataClass>().apply { chaptersInDb.forEach { putIfAbsent(it.url, it) } }
 
@@ -288,7 +289,7 @@ object Chapter {
 
                         // For a new (unrecognized) chapter, we have to handle the existing downloads as obsolete in case the scanlator changed because we can't assume that the pages are still the same
                         val isSameScanlator = chapter.scanlator == deletedChapter.scanlator
-                        val isPreservable = isSameScanlator && updateChapterDownloadDir(deletedChapter, chapter)
+                        val isPreservable = isSameScanlator && downloadDirs.update(deletedChapter, chapter)
 
                         isPreservable
                     }
@@ -330,7 +331,7 @@ object Chapter {
                                 return@forEach
                             }
 
-                            val isDownloadPreservable = updateChapterDownloadDir(currentChapter, it)
+                            val isDownloadPreservable = downloadDirs.update(currentChapter, it)
                             if (!isDownloadPreservable) {
                                 this[ChapterTable.isDownloaded] = false
                                 this[ChapterTable.pageCount] = -1

@@ -51,6 +51,8 @@ object ForkSchema {
                     try {
                         // one transaction per index: on Postgres a failed statement aborts the rest of its transaction
                         transaction {
+                            // Exposed retries a failed transaction (3 attempts by default); each retry would wait for the lock again
+                            maxAttempts = 1
                             if (postgres) {
                                 exec("SET LOCAL lock_timeout = $lockTimeoutMs")
                                 applyOnPostgres(name, definition)

@@ -7,6 +7,7 @@ import suwayomi.tachidesk.test.PostgresTest
 import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ForkSchemaPostgresTest : PostgresTest() {
     private fun names(): List<String> =
@@ -64,10 +65,14 @@ class ForkSchemaPostgresTest : PostgresTest() {
     fun `a missing index gives up after the lock timeout and startup goes on`() {
         transaction { exec("DROP INDEX suwayomi.fork_chapter_manga_fetched_at") }
         try {
+            val started = System.nanoTime()
             val failed =
                 whileTableIsBeingUpdated("chapter") {
-                    assertTimeoutPreemptively(Duration.ofSeconds(10)) { ForkSchema.apply(lockTimeoutMs = 500) }
+                    assertTimeoutPreemptively(Duration.ofSeconds(20)) { ForkSchema.apply(lockTimeoutMs = 2_000) }
                 }
+            val tookMs = (System.nanoTime() - started) / 1_000_000
+            // one wait, not one per retry: a retry would queue another lock request and block writers again
+            assertTrue(tookMs < 4_000, "took $tookMs ms for a 2000 ms lock timeout")
             assertEquals(listOf("fork_chapter_manga_fetched_at"), failed)
             assertFalse("fork_chapter_manga_fetched_at" in names())
         } finally {

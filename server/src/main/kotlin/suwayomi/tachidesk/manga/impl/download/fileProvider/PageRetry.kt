@@ -10,6 +10,8 @@ val PAGE_RETRY_DELAYS_MS = listOf(2_000L, 4_000L, 8_000L)
 
 private const val MAX_CAUSES = 16
 
+private const val WAIT_CHECK_EVERY_MS = 500L
+
 /**
  * Whether a page failure may pass on a later try: network I/O errors, and HTTP 5xx and 429 from the page itself.
  * Anything else (404, a parse error) fails at once. `Retry-After` can't be honored: [HttpException] carries no headers.
@@ -41,5 +43,19 @@ suspend fun <T> withPageRetries(
             if (retries >= delaysMs.size || !isRetryablePageFailure(e)) throw e
             wait(delaysMs[retries++])
         }
+    }
+}
+
+/** Waits [ms], calling [check] every half second so a check that throws (the chapter was dequeued or moved down) ends the wait. */
+suspend fun delayChecking(
+    ms: Long,
+    check: suspend () -> Unit,
+) {
+    var left = ms
+    while (left > 0) {
+        val slice = minOf(left, WAIT_CHECK_EVERY_MS)
+        delay(slice)
+        left -= slice
+        check()
     }
 }

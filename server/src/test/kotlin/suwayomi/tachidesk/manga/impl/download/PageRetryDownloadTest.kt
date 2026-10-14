@@ -1,10 +1,13 @@
 package suwayomi.tachidesk.manga.impl.download
 
 import eu.kanade.tachiyomi.network.HttpException
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import suwayomi.tachidesk.manga.impl.ChapterDownloadHelper
+import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
 import suwayomi.tachidesk.manga.impl.util.source.GetSource.registerSource
 import suwayomi.tachidesk.manga.impl.util.source.GetSource.unregisterSource
 import suwayomi.tachidesk.server.serverConfig
@@ -12,6 +15,7 @@ import suwayomi.tachidesk.test.ApplicationTest
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /** F9 end to end: real waits (2 s + 4 s) through ChapterDownloadHelper. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -59,5 +63,23 @@ class PageRetryDownloadTest : ApplicationTest() {
             val e = assertFailsWith<HttpException> { downloadChapter(c, source.id, pageCount) }
             assertEquals(404, e.code)
             assertEquals(1, source.attemptsFor(2))
+        }
+
+    /** The downloader's step throws once the chapter is dequeued or moved down; a retry wait must notice that, not sleep through it. */
+    @Test
+    fun `a chapter dequeued while a page waits to retry stops within a second`() =
+        withSource({ _, _ -> 503 }) { source, c ->
+            val item = DownloadQueueItem(c.chapterId, 1, c.mangaId, source.id, pageCount)
+            val started = System.nanoTime()
+            assertFailsWith<Downloader.StopDownloadException> {
+                runBlocking {
+                    ChapterDownloadHelper.download(c.mangaId, c.chapterId, item, this) { _, _ ->
+                        if (source.attemptsFor(0) > 0) throw Downloader.StopDownloadException()
+                    }
+                }
+            }
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+            assertTrue(elapsedMs < 1_500, "stopped after $elapsedMs ms")
+            assertEquals(1, source.attemptsFor(0))
         }
 }

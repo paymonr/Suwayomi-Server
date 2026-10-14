@@ -7,9 +7,11 @@
 
 package suwayomi.tachidesk.graphql.controller
 
+import com.expediagroup.graphql.server.types.GraphQLServerResponse
 import io.javalin.http.ContentType
 import io.javalin.http.Context
 import io.javalin.http.HttpStatus
+import io.javalin.json.JavalinJackson3
 import io.javalin.websocket.WsConfig
 import suwayomi.tachidesk.graphql.server.TachideskGraphQLServer
 import suwayomi.tachidesk.graphql.server.TemporaryFileStorage
@@ -24,13 +26,7 @@ object GraphQLController {
         ctx.future {
             future {
                 server.execute(ctx)
-            }.thenApply {
-                if (it != null) {
-                    ctx.json(it)
-                } else {
-                    ctx.status(HttpStatus.BAD_REQUEST)
-                }
-            }
+            }.thenApply { ctx.respondGraphQL(it) }
         }
     }
 
@@ -55,4 +51,23 @@ object GraphQLController {
             server.handleSubscriptionDisconnect(ctx)
         }
     }
+}
+
+/**
+ * Fork (F6): write the JSON straight to the response instead of building it as one String first
+ * (suwayomi-dm's snapshot is ~44 MB). Not `jsonStream`: Javalin pipes that through a 1 KB buffer on
+ * another thread, which took 3.7 s instead of 0.15 s for a 56 MB response.
+ */
+internal fun Context.respondGraphQL(response: GraphQLServerResponse?) {
+    if (response == null) {
+        status(HttpStatus.BAD_REQUEST)
+        return
+    }
+    val mapper = (jsonMapper() as? JavalinJackson3)?.mapper
+    if (mapper == null) {
+        json(response)
+        return
+    }
+    contentType(ContentType.APPLICATION_JSON)
+    mapper.writeValue(outputStream(), response)
 }

@@ -64,6 +64,28 @@ class PageRetryTest {
     }
 
     @Test
+    fun `a network error wrapped by the network layer is retried`() {
+        val run = runPage(IOException("reset", IOException("connection reset")))
+        assertEquals("page", run.result.getOrThrow())
+        assertEquals(1, run.waits.size)
+    }
+
+    /** OkHttp's await and UncaughtExceptionInterceptor wrap an interceptor's failure in IOExceptions; retrying it repeats the solve. */
+    @Test
+    fun `a failure inside an interceptor, such as a failed Cloudflare solve, is not retried`() {
+        val run = runPage(IOException("solve failed", IOException(IllegalStateException("cloudflare bypass failed"))))
+        assertEquals(1, run.attempts)
+        assertEquals(emptyList(), run.waits)
+    }
+
+    @Test
+    fun `a solver's own HTTP error wrapped by the network layer is not retried`() {
+        val run = runPage(IOException("solver", IOException(HttpException(500))))
+        assertEquals(1, run.attempts)
+        assertEquals(emptyList(), run.waits)
+    }
+
+    @Test
     fun `a 404 fails at once without waiting`() {
         val run = runPage(HttpException(404))
         assertEquals(404, (run.result.exceptionOrNull() as HttpException).code)

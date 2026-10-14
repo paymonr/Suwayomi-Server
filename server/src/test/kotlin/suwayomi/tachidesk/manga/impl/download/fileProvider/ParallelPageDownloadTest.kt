@@ -104,13 +104,17 @@ class ParallelPageDownloadTest {
     private fun stopOrPauseCancelsPagesInFlight(signal: () -> Exception) =
         runTest {
             val started = AtomicInteger()
+            val othersInFlight = CompletableDeferred<Unit>()
             val cancelled = AtomicInteger()
             val finishedAfterSignal = AtomicInteger()
             val thrown =
                 runCatching {
                     downloadPagesInParallel(6, parallelism = 3, isDone = { false }, download = { page ->
-                        if (page != 0) {
-                            started.incrementAndGet()
+                        if (page == 0) {
+                            // finish (and signal) only once pages 1 and 2 are mid-download
+                            othersInFlight.await()
+                        } else {
+                            if (started.incrementAndGet() == 2) othersInFlight.complete(Unit)
                             try {
                                 delay(10_000)
                             } catch (e: CancellationException) {
@@ -122,7 +126,8 @@ class ParallelPageDownloadTest {
                     }, onPageDone = { throw signal() })
                 }.exceptionOrNull()
             assertEquals(signal()::class, thrown?.let { it::class })
-            assertEquals(started.get(), cancelled.get())
+            assertEquals(2, started.get())
+            assertEquals(2, cancelled.get())
             assertEquals(0, finishedAfterSignal.get())
         }
 

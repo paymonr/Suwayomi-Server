@@ -1,11 +1,15 @@
 package suwayomi.tachidesk.manga.impl.download.fileProvider
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import suwayomi.tachidesk.manga.impl.download.Downloader
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.ContinuationInterceptor
@@ -94,5 +98,62 @@ class ParallelPageDownloadTest {
                 interceptors += currentCoroutineContext()[ContinuationInterceptor]
             }, onPageDone = {})
             assertEquals(List(3) { Dispatchers.IO }, interceptors.toList())
+        }
+
+    /** Stop and Pause reach the helper as exceptions thrown by the downloader's step() inside onPageDone. */
+    private fun stopOrPauseCancelsPagesInFlight(signal: () -> Exception) =
+        runTest {
+            val started = AtomicInteger()
+            val cancelled = AtomicInteger()
+            val finishedAfterSignal = AtomicInteger()
+            val thrown =
+                runCatching {
+                    downloadPagesInParallel(6, parallelism = 3, isDone = { false }, download = { page ->
+                        if (page != 0) {
+                            started.incrementAndGet()
+                            try {
+                                delay(10_000)
+                            } catch (e: CancellationException) {
+                                cancelled.incrementAndGet()
+                                throw e
+                            }
+                            finishedAfterSignal.incrementAndGet()
+                        }
+                    }, onPageDone = { throw signal() })
+                }.exceptionOrNull()
+            assertEquals(signal()::class, thrown?.let { it::class })
+            assertEquals(started.get(), cancelled.get())
+            assertEquals(0, finishedAfterSignal.get())
+        }
+
+    @Test
+    fun `a stop from onPageDone cancels the pages in flight and is rethrown`() =
+        stopOrPauseCancelsPagesInFlight { Downloader.StopDownloadException() }
+
+    @Test
+    fun `a pause from onPageDone cancels the pages in flight and is rethrown`() =
+        stopOrPauseCancelsPagesInFlight { Downloader.PauseDownloadException() }
+
+    @Test
+    fun `cancelling the downloader job cancels the pages in flight`() =
+        runTest {
+            val started = CompletableDeferred<Unit>()
+            val cancelled = AtomicInteger()
+            val job =
+                launch(Dispatchers.Default) {
+                    downloadPagesInParallel(4, parallelism = 2, isDone = { false }, download = {
+                        started.complete(Unit)
+                        try {
+                            delay(10_000)
+                        } catch (e: CancellationException) {
+                            cancelled.incrementAndGet()
+                            throw e
+                        }
+                    }, onPageDone = {})
+                }
+            started.await()
+            job.cancelAndJoin()
+            assertTrue(job.isCancelled)
+            assertTrue(cancelled.get() >= 1)
         }
 }

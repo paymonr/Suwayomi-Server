@@ -34,6 +34,7 @@ object PruneFixture {
         inLibrary: Boolean = false,
         source: Long = 1,
         lastFetchedAt: Long = 0,
+        chaptersLastFetchedAt: Long = 0,
     ): Int =
         transaction {
             MangaTable
@@ -43,6 +44,7 @@ object PruneFixture {
                     it[sourceReference] = source
                     it[MangaTable.inLibrary] = inLibrary
                     it[MangaTable.lastFetchedAt] = lastFetchedAt
+                    it[MangaTable.chaptersLastFetchedAt] = chaptersLastFetchedAt
                 }.value
         }
 
@@ -85,6 +87,7 @@ object PruneFixture {
         kept["page progress"] = manga("page progress").also { chapters(it) { c -> c[ChapterTable.lastPageRead] = 3 } }
         kept["read time"] = manga("read time").also { chapters(it) { c -> c[ChapterTable.lastReadAt] = 1_700_000_000L } }
         kept["recently opened"] = manga("recently opened", lastFetchedAt = NOW - 3_600).also { chapters(it) }
+        kept["chapters fetched recently"] = manga("chapters fetched recently", chaptersLastFetchedAt = NOW - 3_600).also { chapters(it) }
         kept["local source"] = manga("local", source = LocalSource.ID).also { chapters(it) }
         kept["category"] =
             manga("category").also { id ->

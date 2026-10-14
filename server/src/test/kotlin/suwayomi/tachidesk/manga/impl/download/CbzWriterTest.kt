@@ -1,6 +1,8 @@
 package suwayomi.tachidesk.manga.impl.download
 
 import kotlinx.coroutines.runBlocking
+import org.apache.commons.compress.archivers.zip.Zip64ExtendedInformationExtraField
+import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
@@ -64,6 +66,32 @@ class CbzWriterTest : ApplicationTest() {
             mapOf("001.jpg" to ZipEntry.STORED, "002.png" to ZipEntry.STORED, "ComicInfo.xml" to ZipEntry.DEFLATED),
             methods,
         )
+    }
+
+    /** Local headers and central directory both, as streaming and random-access readers each read one of them. */
+    @Test
+    fun `entries carry no zip64 extra field, which older readers reject`() {
+        val cbz = File(createTempDirectory("f11-zip64").toFile(), "chapter.cbz")
+        writeCbz(pagesFolder(), cbz)
+        val local =
+            ZipArchiveInputStream(cbz.inputStream()).use { zip ->
+                generateSequence { zip.nextEntry }
+                    .map {
+                        it.name to
+                            it.extraFields.any { f ->
+                                f is Zip64ExtendedInformationExtraField
+                            }
+                    }.toList()
+            }
+        val central =
+            org.apache.commons.compress.archivers.zip.ZipFile
+                .builder()
+                .setFile(cbz)
+                .get()
+                .use { zip -> zip.entries.toList().map { it.name to it.extraFields.any { f -> f is Zip64ExtendedInformationExtraField } } }
+        val none = listOf("001.jpg" to false, "002.png" to false, "ComicInfo.xml" to false)
+        assertEquals(none, local, "local headers")
+        assertEquals(none, central, "central directory")
     }
 
     /** Characterization for Review Focus 5: passes before and after the change. */

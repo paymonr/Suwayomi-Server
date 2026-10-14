@@ -37,6 +37,8 @@ internal fun writeCbz(
             val entry = ZipArchiveEntry(it.name)
             entry.time = 0L
             entry.method = if (it.name == COMIC_INFO_FILE) ZipEntry.DEFLATED else ZipEntry.STORED
+            // a known size keeps commons-compress from adding a Zip64 extra field to every local header
+            entry.size = it.length()
             try {
                 zipOut.putArchiveEntry(entry)
                 it.inputStream().use { inputStream ->

@@ -16,6 +16,8 @@ import io.javalin.websocket.WsConfig
 import suwayomi.tachidesk.graphql.server.TachideskGraphQLServer
 import suwayomi.tachidesk.graphql.server.TemporaryFileStorage
 import suwayomi.tachidesk.server.JavalinSetup.future
+import tools.jackson.core.JacksonException
+import java.io.IOException
 import kotlin.io.path.inputStream
 
 object GraphQLController {
@@ -69,5 +71,11 @@ internal fun Context.respondGraphQL(response: GraphQLServerResponse?) {
         return
     }
     contentType(ContentType.APPLICATION_JSON)
-    mapper.writeValue(outputStream(), response)
+    try {
+        mapper.writeValue(outputStream(), response)
+    } catch (e: JacksonException) {
+        // Jackson wraps a write to a closed connection; Javalin logs a client abort at debug only when it sees
+        // Jetty's EofException itself, so rethrow the I/O error underneath
+        throw generateSequence<Throwable>(e) { it.cause }.filterIsInstance<IOException>().firstOrNull() ?: e
+    }
 }

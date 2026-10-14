@@ -11,9 +11,12 @@ import io.mockk.mockk
 import io.mockk.verify
 import jakarta.servlet.ServletOutputStream
 import jakarta.servlet.WriteListener
+import org.eclipse.jetty.io.EofException
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
 import kotlin.test.assertContentEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class GraphQLResponseStreamingTest {
@@ -82,5 +85,37 @@ class GraphQLResponseStreamingTest {
         val ctx = mockk<Context>(relaxed = true)
         ctx.respondGraphQL(null)
         verify { ctx.status(HttpStatus.BAD_REQUEST) }
+    }
+
+    /**
+     * Javalin logs a client abort at debug only when the exception (or a CompletionException's cause) is Jetty's
+     * EofException itself (`isClientAbortException` in its ExceptionMapper); Jackson's wrapper around it is logged as an error.
+     */
+    @Test
+    fun `a client that hangs up mid-response is reported as a client abort`() {
+        val closed =
+            object : ServletOutputStream() {
+                override fun write(b: Int) = throw EofException("Closed")
+
+                override fun write(
+                    b: ByteArray,
+                    off: Int,
+                    len: Int,
+                ) = throw EofException("Closed")
+
+                override fun isReady() = true
+
+                override fun setWriteListener(writeListener: WriteListener?) = Unit
+            }
+        val ctx =
+            mockk<Context>(relaxed = true).also {
+                every { it.jsonMapper() } returns JavalinJackson3()
+                every { it.outputStream() } returns closed
+            }
+        val big = GraphQLResponse(data = mapOf("nodes" to List(10_000) { mapOf("id" to it, "title" to "series $it") }))
+
+        val e = assertFailsWith<Throwable> { ctx.respondGraphQL(big) }
+
+        assertIs<EofException>(e)
     }
 }

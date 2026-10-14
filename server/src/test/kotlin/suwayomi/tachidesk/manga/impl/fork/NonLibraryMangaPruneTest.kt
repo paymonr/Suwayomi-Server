@@ -1,6 +1,10 @@
 package suwayomi.tachidesk.manga.impl.fork
 
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.update
 import org.junit.jupiter.api.Test
+import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.test.ApplicationTest
 import java.io.File
 import kotlin.io.path.createTempDirectory
@@ -20,7 +24,7 @@ object PruneChecks {
                 exclude,
                 dryRun = true,
                 nowEpochSeconds = PruneFixture.NOW,
-                queuedMangaIds = queued,
+                queuedMangaIds = { queued },
                 coverDirs = emptyList(),
             )
 
@@ -40,7 +44,7 @@ object PruneChecks {
                 exclude,
                 dryRun = false,
                 nowEpochSeconds = PruneFixture.NOW,
-                queuedMangaIds = setOf(ids.queued),
+                queuedMangaIds = { setOf(ids.queued) },
                 coverDirs = emptyList(),
             )
 
@@ -60,7 +64,7 @@ object PruneChecks {
             exclude,
             dryRun = false,
             nowEpochSeconds = PruneFixture.NOW,
-            queuedMangaIds = setOf(ids.queued),
+            queuedMangaIds = { setOf(ids.queued) },
             coverDirs = emptyList(),
         )
 
@@ -69,9 +73,26 @@ object PruneChecks {
         assertEquals(emptySet(), gone, "deleted but should have been kept")
         survivors.values.forEach { assertTrue(PruneFixture.chaptersOf(listOf(it)) == 2L, "chapters of $it") }
     }
+
+    /** Review finding: a batch is deleted minutes after the candidates are listed; a series touched in between must survive. */
+    fun aSeriesTouchedAfterListingSurvivesItsBatch() {
+        val ids = PruneFixture.create()
+        val (touched, untouched) = ids.prunable
+        val fetchedBefore = PruneFixture.NOW - NonLibraryMangaPrune.GRACE_SECONDS
+        transaction { MangaTable.update({ MangaTable.id eq touched }) { it[inLibrary] = true } }
+
+        val result = NonLibraryMangaPrune.pruneBatch(listOf(touched, untouched), fetchedBefore, emptySet(), emptySet(), dryRun = false)
+
+        assertEquals(listOf(untouched), result.mangaIds)
+        assertEquals(setOf(touched), PruneFixture.existing(listOf(touched, untouched)))
+        assertEquals(2L, PruneFixture.chaptersOf(listOf(touched)))
+    }
 }
 
 class NonLibraryMangaPruneTest : ApplicationTest() {
+    @Test
+    fun `a series touched after the candidates are listed survives its batch`() = PruneChecks.aSeriesTouchedAfterListingSurvivesItsBatch()
+
     @Test
     fun `a dry run counts what a real run would delete and deletes nothing`() = PruneChecks.dryRunMatchesAndDeletesNothing()
 
@@ -99,7 +120,7 @@ class NonLibraryMangaPruneTest : ApplicationTest() {
             exclude,
             dryRun = false,
             nowEpochSeconds = PruneFixture.NOW,
-            queuedMangaIds = setOf(ids.queued),
+            queuedMangaIds = { setOf(ids.queued) },
             coverDirs = listOf(dir),
         )
 

@@ -34,7 +34,13 @@ class ForkMaintenanceMutationTest : ApplicationTest() {
     fun `the mutation dry-runs by default and reports the service's counts`() {
         val ids = PruneFixture.create()
         val before = PruneFixture.allMangaIds()
-        val expected = NonLibraryMangaPrune.prune(setOf(ids.excluded), dryRun = true, queuedMangaIds = emptySet(), coverDirs = emptyList())
+        val expected =
+            NonLibraryMangaPrune.prune(
+                setOf(ids.excluded),
+                dryRun = true,
+                queuedMangaIds = { emptySet() },
+                coverDirs = emptyList(),
+            )
 
         val data =
             execute("""mutation { pruneNonLibraryManga(input: {excludeMangaIds: [${ids.excluded}]}) { dryRun mangaCount chapterCount } }""")

@@ -2,6 +2,7 @@ package suwayomi.tachidesk.manga.impl.fork
 
 import eu.kanade.tachiyomi.source.local.LocalSource
 import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
@@ -54,27 +55,51 @@ object NonLibraryMangaPrune {
         excludeMangaIds: Set<Int>,
         dryRun: Boolean,
         nowEpochSeconds: Long = Instant.now().epochSecond,
-        queuedMangaIds: Set<Int> = DownloadManager.getStatus().queue.mapTo(HashSet()) { it.mangaId },
+        queuedMangaIds: () -> Set<Int> = { DownloadManager.getStatus().queue.mapTo(HashSet()) { it.mangaId } },
         coverDirs: List<File> = listOf(File(applicationDirs.tempThumbnailCacheRoot), File(applicationDirs.thumbnailDownloadsRoot)),
     ): Result {
-        val ids = candidates(nowEpochSeconds - GRACE_SECONDS).filterNot { it in excludeMangaIds || it in queuedMangaIds }
+        val fetchedBefore = nowEpochSeconds - GRACE_SECONDS
+        val queued = queuedMangaIds()
+        val ids = candidates(fetchedBefore).filterNot { it in excludeMangaIds || it in queued }
         var chapterCount = 0L
+        val pruned = mutableListOf<Int>()
         ids.chunked(BATCH).forEach { batch ->
-            transaction {
-                val chapterIds = ChapterTable.select(ChapterTable.id).where { ChapterTable.manga inList batch }
-                chapterCount += chapterIds.count()
-                if (!dryRun) {
-                    PageTable.deleteWhere { PageTable.chapter inSubQuery chapterIds }
-                    ChapterTable.deleteWhere { ChapterTable.manga inList batch }
-                    MangaTable.deleteWhere { MangaTable.id inList batch }
-                }
-            }
+            val result = pruneBatch(batch, fetchedBefore, excludeMangaIds, queuedMangaIds(), dryRun)
+            pruned += result.mangaIds
+            chapterCount += result.chapterCount
         }
-        if (!dryRun) deleteCovers(ids.toSet(), coverDirs)
-        return Result(ids, chapterCount)
+        if (!dryRun) deleteCovers(pruned.toSet(), coverDirs)
+        return Result(pruned, chapterCount)
     }
 
-    private fun candidates(fetchedBefore: Long): List<Int> =
+    /**
+     * Deletes the series of [batch] that still match the rule. A batch runs minutes after the candidates were listed, so
+     * the rule, the exclusions and the download queue are checked again in the batch's own transaction.
+     */
+    internal fun pruneBatch(
+        batch: List<Int>,
+        fetchedBefore: Long,
+        excludeMangaIds: Set<Int>,
+        queuedMangaIds: Set<Int>,
+        dryRun: Boolean,
+    ): Result =
+        transaction {
+            val ids = candidates(fetchedBefore, only = batch).filterNot { it in excludeMangaIds || it in queuedMangaIds }
+            if (ids.isEmpty()) return@transaction Result(emptyList(), 0)
+            val chapterIds = ChapterTable.select(ChapterTable.id).where { ChapterTable.manga inList ids }
+            val chapterCount = chapterIds.count()
+            if (!dryRun) {
+                PageTable.deleteWhere { PageTable.chapter inSubQuery chapterIds }
+                ChapterTable.deleteWhere { ChapterTable.manga inList ids }
+                MangaTable.deleteWhere { MangaTable.id inList ids }
+            }
+            Result(ids, chapterCount)
+        }
+
+    private fun candidates(
+        fetchedBefore: Long,
+        only: List<Int>? = null,
+    ): List<Int> =
         transaction {
             val touchedChapter =
                 ChapterTable.select(ChapterTable.id).where {
@@ -93,7 +118,8 @@ object NonLibraryMangaPrune {
             MangaTable
                 .select(MangaTable.id)
                 .where {
-                    (MangaTable.inLibrary eq false) and (MangaTable.sourceReference neq LocalSource.ID) and
+                    (if (only != null) MangaTable.id inList only else Op.TRUE) and
+                        (MangaTable.inLibrary eq false) and (MangaTable.sourceReference neq LocalSource.ID) and
                         (MangaTable.lastFetchedAt less fetchedBefore) and (MangaTable.chaptersLastFetchedAt less fetchedBefore) and
                         notExists(touchedChapter) and
                         notExists(CategoryMangaTable.select(CategoryMangaTable.id).where { CategoryMangaTable.manga eq MangaTable.id }) and

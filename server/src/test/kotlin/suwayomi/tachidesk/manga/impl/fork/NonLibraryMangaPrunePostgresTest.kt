@@ -13,4 +13,7 @@ class NonLibraryMangaPrunePostgresTest : PostgresTest() {
 
     @Test
     fun `every kept case survives a real run`() = PruneChecks.everyKeptCaseSurvivesARealRun()
+
+    @Test
+    fun `a series touched after the candidates are listed survives its batch`() = PruneChecks.aSeriesTouchedAfterListingSurvivesItsBatch()
 }

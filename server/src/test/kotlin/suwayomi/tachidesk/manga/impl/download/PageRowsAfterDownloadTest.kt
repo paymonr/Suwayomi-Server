@@ -23,6 +23,7 @@ import suwayomi.tachidesk.test.ApplicationTest
 import java.io.File
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PageRowsAfterDownloadTest : ApplicationTest() {
@@ -50,6 +51,15 @@ class PageRowsAfterDownloadTest : ApplicationTest() {
     private fun markDownloaded(chapterId: Int) {
         transaction { ChapterTable.update({ ChapterTable.id eq chapterId }) { it[isDownloaded] = true } }
     }
+
+    private fun isDownloaded(chapterId: Int): Boolean =
+        transaction {
+            ChapterTable
+                .select(
+                    ChapterTable.isDownloaded,
+                ).where { ChapterTable.id eq chapterId }
+                .first()[ChapterTable.isDownloaded]
+        }
 
     private fun readPage(
         c: FakeChapter,
@@ -84,6 +94,21 @@ class PageRowsAfterDownloadTest : ApplicationTest() {
 
         assertContentEquals(FakePageSource.pageBytes(1), readPage(c, 1))
         assertEquals(listsBefore + 1, source.pageListRequests.get())
+    }
+
+    /** A bad index or a read error on a file that's still there must not reset the chapter or bring its rows back. */
+    @Test
+    fun `a downloaded chapter asked for a page past its end stays downloaded`() {
+        val c = createChapterWithPages(sourceId, pageCount, "F7 past end")
+        downloadChapter(c, sourceId, pageCount)
+        markDownloaded(c.chapterId)
+        val listsBefore = source.pageListRequests.get()
+
+        assertFails { readPage(c, pageCount + 1) }
+
+        assertEquals(true, isDownloaded(c.chapterId))
+        assertEquals(listsBefore, source.pageListRequests.get())
+        assertEquals(0, pageRows(c.chapterId))
     }
 
     /** Characterization: the online path F7 relies on. Passes before and after the fix. */

@@ -57,6 +57,11 @@ object Page {
         return page.imageUrl!!
     }
 
+    private suspend fun downloadedImageCount(
+        mangaId: Int,
+        chapterId: Int,
+    ): Int = runCatching { ChapterDownloadHelper.getImageCount(mangaId, chapterId) }.getOrDefault(0)
+
     private fun findPageRow(
         chapterId: Int,
         index: Int,
@@ -95,18 +100,22 @@ object Page {
             }
         val chapterId = chapterEntry[ChapterTable.id].value
 
+        var downloadReadFailure: Exception? = null
         try {
             if (chapterEntry[ChapterTable.isDownloaded]) {
                 return ChapterDownloadHelper.getImage(mangaId, chapterId, index)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // ignore and fetch again
+            downloadReadFailure = e
         }
 
         val pageEntry =
             findPageRow(chapterId, index)
                 ?: run {
-                    // Fork (F7): downloaded chapters keep no page rows; if the file can't be read, fetch the page list again
+                    // Fork (F7): downloaded chapters keep no page rows. Fetch the page list again only if the download is
+                    // gone: refreshing marks the chapter not downloaded, which a bad index or a read error must not do.
+                    if (downloadReadFailure != null && downloadedImageCount(mangaId, chapterId) > 0) throw downloadReadFailure
                     refreshChapterPageList(mangaId, chapterId)
                     findPageRow(chapterId, index)
                 }

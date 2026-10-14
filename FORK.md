@@ -8,7 +8,8 @@ Personal fork of Suwayomi-Server, based on tag `v2.4.2366` (the last single-user
 - Fork builds report version `v2.4.2366` (the upstream base, so WebUI compatibility checks stay truthful),
   build type `Stable`, and revision `r<count>-fork`.
 - Fork-only schema: `server/src/main/kotlin/suwayomi/tachidesk/server/database/fork/ForkSchema.kt`
-  (`fork_*` indexes, idempotent). The stock image still starts on a database this fork has touched.
+  (`fork_*` indexes, idempotent; a failed index is logged and skipped, and an invalid one is rebuilt). The stock
+  image still starts on a database this fork has touched.
 - Fork-only knob: JVM property `-Dsuwayomi.fork.downloadParallelPages=N` (default 3, 1–8).
 - AndroidCompat, extension loading and network interceptors are kept identical to upstream, so
   upstream's extension-compatibility fixes cherry-pick cleanly.

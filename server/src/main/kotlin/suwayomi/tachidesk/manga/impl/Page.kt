@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.StateFlow
 import libcore.net.MimeUtils
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -20,6 +21,7 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.graphql.types.DownloadConversion
+import suwayomi.tachidesk.manga.impl.chapter.refreshChapterPageList
 import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.source.GetSource.getSourceOrNull
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse.getImageResponse
@@ -55,6 +57,20 @@ object Page {
         return page.imageUrl!!
     }
 
+    private fun findPageRow(
+        chapterId: Int,
+        index: Int,
+    ): ResultRow? =
+        transaction {
+            PageTable
+                .selectAll()
+                .where { (PageTable.chapter eq chapterId) }
+                .orderBy(PageTable.index to SortOrder.ASC)
+                .limit(1)
+                .offset(index.toLong())
+                .firstOrNull()
+        }
+
     suspend fun getPageImage(
         mangaId: Int,
         chapterId: Int? = null,
@@ -88,15 +104,13 @@ object Page {
         }
 
         val pageEntry =
-            transaction {
-                PageTable
-                    .selectAll()
-                    .where { (PageTable.chapter eq chapterId) }
-                    .orderBy(PageTable.index to SortOrder.ASC)
-                    .limit(1)
-                    .offset(index.toLong())
-                    .first()
-            }
+            findPageRow(chapterId, index)
+                ?: run {
+                    // Fork (F7): downloaded chapters keep no page rows; if the file can't be read, fetch the page list again
+                    refreshChapterPageList(mangaId, chapterId)
+                    findPageRow(chapterId, index)
+                }
+                ?: throw NoSuchElementException("Chapter $chapterId has no page $index")
         val tachiyomiPage =
             Page(
                 pageEntry[PageTable.index],

@@ -1,0 +1,3 @@
+# The image only needs the jar CI just built; keep .git, sources and build outputs out of the build context.
+*
+!server/build/Suwayomi-Server-*.jar

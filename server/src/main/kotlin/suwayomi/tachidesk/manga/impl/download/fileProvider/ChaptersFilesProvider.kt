@@ -134,13 +134,15 @@ abstract class ChaptersFilesProvider<Type : FileType>(
             },
             download = { pageNum ->
                 // per-page byte progress isn't reported while pages run in parallel; progress moves per finished page
-                Page.getPageImageDownload(
-                    mangaId = download.mangaId,
-                    chapterId = download.chapterId,
-                    index = pageNum,
-                    downloadCacheFolder,
-                    Page.getPageName(pageNum, pageCount),
-                ) { }
+                withPageRetries {
+                    Page.getPageImageDownload(
+                        mangaId = download.mangaId,
+                        chapterId = download.chapterId,
+                        index = pageNum,
+                        downloadCacheFolder,
+                        Page.getPageName(pageNum, pageCount),
+                    ) { }
+                }
             },
             onPageDone = { finishedPages ->
                 download.progress = finishedPages.toFloat() / pageCount

@@ -40,6 +40,7 @@ import suwayomi.tachidesk.manga.impl.backup.proto.ProtoBackupExport
 import suwayomi.tachidesk.manga.impl.download.DownloadManager
 import suwayomi.tachidesk.manga.impl.extension.Extension
 import suwayomi.tachidesk.manga.impl.extension.ExtensionStoreService
+import suwayomi.tachidesk.manga.impl.extension.ForkExtensionRefresh
 import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.manga.impl.update.Updater
 import suwayomi.tachidesk.manga.impl.util.lang.renameTo
@@ -450,6 +451,8 @@ fun applicationSetup() {
     // start automated global updates
     val updater = Injekt.get<IUpdater>()
     (updater as Updater).scheduleUpdateTask()
+    // Fork (F3): refresh extension lists on a schedule, optionally installing updates
+    ForkExtensionRefresh.schedule()
 
     // start automated backups
     ProtoBackupExport.scheduleAutomatedBackupTask()

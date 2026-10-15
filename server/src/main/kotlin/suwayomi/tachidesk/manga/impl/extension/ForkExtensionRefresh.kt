@@ -2,19 +2,60 @@ package suwayomi.tachidesk.manga.impl.extension
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
+import suwayomi.tachidesk.util.HAScheduler
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 /** Fork-only (F3): refresh every store's extension list on a schedule and log the installed extensions that have updates. */
 object ForkExtensionRefresh {
     private val logger = KotlinLogging.logger {}
+
+    const val INTERVAL_PROPERTY = "suwayomi.fork.extensionRefreshHours"
+    const val DEFAULT_INTERVAL_HOURS = 6L
+    private val FIRST_RUN_DELAY = 10.minutes
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Hours between refreshes (`-Dsuwayomi.fork.extensionRefreshHours=N`); 0 turns the schedule off. */
+    val intervalHours: Long
+        get() = System.getProperty(INTERVAL_PROPERTY)?.toLongOrNull()?.coerceAtLeast(0) ?: DEFAULT_INTERVAL_HOURS
+
+    /** Schedules [runOnce], first 10 min after start; returns the scheduler's task id, or null when it's off. */
+    fun schedule(): String? {
+        val hours = intervalHours
+        if (hours == 0L) {
+            logger.info { "Scheduled extension refresh is off ($INTERVAL_PROPERTY=0)" }
+            return null
+        }
+        return HAScheduler.schedule(
+            {
+                scope.launch {
+                    try {
+                        runOnce()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.warn(e) { "Scheduled extension refresh failed" }
+                    }
+                }
+            },
+            hours.hours.inWholeMilliseconds,
+            FIRST_RUN_DELAY.inWholeMilliseconds,
+            "fork-extension-refresh",
+        )
+    }
 
     data class RefreshResult(
         /** Package names of installed extensions with a newer version in a store. */

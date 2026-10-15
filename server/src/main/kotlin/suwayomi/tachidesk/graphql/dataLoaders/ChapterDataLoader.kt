@@ -201,7 +201,7 @@ class LastReadChapterForMangaDataLoader : KotlinDataLoader<Int, ChapterType> {
                     val byManga =
                         firstChapterPerManga(
                             ids,
-                            orderBy = listOf(ChapterTable.lastReadAt to SortOrder.DESC),
+                            orderBy = listOf(ChapterTable.lastReadAt to SortOrder.DESC, ChapterTable.sourceOrder to SortOrder.DESC),
                         )
                     ids.map { byManga[it] }
                 }
@@ -298,7 +298,11 @@ class HighestNumberedChapterForMangaDataLoader : KotlinDataLoader<Int, ChapterTy
                     val byManga =
                         firstChapterPerManga(
                             ids,
-                            orderBy = listOf(ChapterTable.chapter_number to SortOrder.DESC_NULLS_LAST),
+                            orderBy =
+                                listOf(
+                                    ChapterTable.chapter_number to SortOrder.DESC_NULLS_LAST,
+                                    ChapterTable.sourceOrder to SortOrder.DESC,
+                                ),
                             filter = ChapterTable.chapter_number greater 0f,
                         )
                     ids.map { byManga[it] }
@@ -307,7 +311,7 @@ class HighestNumberedChapterForMangaDataLoader : KotlinDataLoader<Int, ChapterTy
         }
 }
 
-/** For each series in [mangaIds], its first chapter by [orderBy] (ties: lowest id), picked in SQL, not in memory. */
+/** For each series in [mangaIds], its first chapter by [orderBy] (exact ties: lowest id), picked in SQL, not in memory. Orders match upstream master. */
 internal fun firstChapterPerManga(
     mangaIds: List<Int>,
     orderBy: List<Pair<Expression<*>, SortOrder>>,

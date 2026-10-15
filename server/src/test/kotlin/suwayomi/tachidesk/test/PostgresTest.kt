@@ -50,6 +50,9 @@ abstract class PostgresTest : ApplicationTest() {
         databaseUp(database)
     }
 
+    /** A separate connection to the same database, outside Exposed (e.g. to hold a lock while production code runs). */
+    protected fun newConnection(): java.sql.Connection = postgres.postgresDatabase.connection
+
     @AfterAll
     fun stopPostgres() {
         // unregister first: with no explicit default, Exposed falls back to the most recently registered database

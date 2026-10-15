@@ -39,44 +39,37 @@ object DBManager {
     @Volatile
     private var hikariDataSource: HikariDataSource? = null
 
-    private fun createHikariDataSource(): HikariDataSource {
+    internal fun hikariConfig(type: DatabaseType = serverConfig.databaseType.value): HikariConfig {
         val applicationDirs = Injekt.get<ApplicationDirs>()
-        val config =
-            HikariConfig().apply {
-                when (serverConfig.databaseType.value) {
-                    DatabaseType.POSTGRESQL -> {
-                        jdbcUrl = "jdbc:${serverConfig.databaseUrl.value}"
-                        driverClassName = "org.postgresql.Driver"
-                        username = serverConfig.databaseUsername.value
-                        password = serverConfig.databasePassword.value
-                        // PostgreSQL specific optimizations
-                        addDataSourceProperty("cachePrepStmts", "true")
-                        addDataSourceProperty("useServerPrepStmts", "true")
-                    }
-
-                    DatabaseType.H2 -> {
-                        jdbcUrl = "jdbc:h2:${applicationDirs.dataRoot}/database"
-                        driverClassName = "org.h2.Driver"
-                        // H2 specific optimizations
-                        addDataSourceProperty("cachePrepStmts", "true")
-                        addDataSourceProperty("prepStmtCacheSize", "25")
-                        addDataSourceProperty("prepStmtCacheSqlLimit", "256")
-                    }
+        return HikariConfig().apply {
+            when (type) {
+                DatabaseType.POSTGRESQL -> {
+                    jdbcUrl = "jdbc:${serverConfig.databaseUrl.value}"
+                    driverClassName = "org.postgresql.Driver"
+                    username = serverConfig.databaseUsername.value
+                    password = serverConfig.databasePassword.value
                 }
 
-                // Optimized for Raspberry Pi / Low memory environments
-                maximumPoolSize = 6 // Moderate pool for better concurrency
-                minimumIdle = 2 // Keep 2 idle connections for responsiveness
-                connectionTimeout = 45.seconds.inWholeMilliseconds // more tolerance for slow devices
-                idleTimeout = 5.minutes.inWholeMilliseconds // close idle connections faster
-                maxLifetime = 15.minutes.inWholeMilliseconds // recycle connections more often
-                leakDetectionThreshold = 1.minutes.inWholeMilliseconds
-
-                // Pool name for monitoring
-                poolName = "Suwayomi-DB-Pool"
+                DatabaseType.H2 -> {
+                    jdbcUrl = "jdbc:h2:${applicationDirs.dataRoot}/database"
+                    driverClassName = "org.h2.Driver"
+                }
             }
-        return HikariDataSource(config)
+
+            // Optimized for Raspberry Pi / Low memory environments
+            maximumPoolSize = 6 // Moderate pool for better concurrency
+            minimumIdle = 2 // Keep 2 idle connections for responsiveness
+            connectionTimeout = 45.seconds.inWholeMilliseconds // more tolerance for slow devices
+            idleTimeout = 5.minutes.inWholeMilliseconds // close idle connections faster
+            maxLifetime = 15.minutes.inWholeMilliseconds // recycle connections more often
+            leakDetectionThreshold = 1.minutes.inWholeMilliseconds
+
+            // Pool name for monitoring
+            poolName = "Suwayomi-DB-Pool"
+        }
     }
+
+    private fun createHikariDataSource(): HikariDataSource = HikariDataSource(hikariConfig())
 
     fun setupDatabase(): Database {
         // Clean up existing connections

@@ -23,6 +23,7 @@ import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import suwayomi.tachidesk.manga.impl.util.source.GetSource
+import suwayomi.tachidesk.server.fork.ForkUserAgent
 import java.net.CookieHandler
 import java.net.CookieManager
 import java.net.CookiePolicy
@@ -50,8 +51,7 @@ class NetworkHelper(
 
     private val userAgent =
         MutableStateFlow(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            ForkUserAgent.value, // Fork (F11): was a hard-coded Chrome 120 user agent
         )
     val userAgentFlow = userAgent.asStateFlow()
 

@@ -7,7 +7,6 @@
 
 package suwayomi.tachidesk.graphql.server.subscriptions
 
-import com.expediagroup.graphql.server.execution.GraphQLRequestHandler
 import com.expediagroup.graphql.server.types.GraphQLRequest
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.javalin.http.Header
@@ -49,7 +48,7 @@ import tools.jackson.module.kotlin.readValue
  */
 class ApolloSubscriptionProtocolHandler(
     private val contextFactory: TachideskGraphQLContextFactory,
-    private val subscriptionHandler: GraphQLRequestHandler,
+    private val subscriptionHandler: GraphQLSubscriptionHandler,
     private val objectMapper: ObjectMapper,
 ) {
     companion object {

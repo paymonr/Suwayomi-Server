@@ -17,8 +17,12 @@ import suwayomi.tachidesk.manga.model.dataclass.ExtensionStore
 import suwayomi.tachidesk.manga.model.table.ExtensionStoreTable
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
 import suwayomi.tachidesk.test.ApplicationTest
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /** F3 against a fixture store (legacy format: repo.json + index.min.json) served by a local Javalin. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -138,5 +142,96 @@ class ForkExtensionRefreshTest : ApplicationTest() {
 
         assertEquals(false, row(kept)!![ExtensionTable.isObsolete])
         assertNotNull(row(available), "the uninstalled entry was deleted")
+    }
+
+    @Test
+    fun `without auto-update nothing is installed`() {
+        val p = pkg("manual")
+        installed(p, 1)
+        listing = listOf(entry(p, 2))
+
+        val result = runBlocking { ForkExtensionRefresh.runOnce(autoUpdate = false, install = { fail("installed without auto-update") }) }
+
+        assertEquals(listOf(p), result.withUpdates)
+        assertEquals(emptyList(), result.updated)
+    }
+
+    /** Review Focus 4. */
+    @Test
+    fun `auto-update installs each extension with an update, even when one fails`() {
+        val broken = pkg("broken")
+        val fine = pkg("fine")
+        installed(broken, 1)
+        installed(fine, 1)
+        listing = listOf(entry(broken, 2), entry(fine, 2))
+        val installs = mutableListOf<String>()
+
+        val result =
+            runBlocking {
+                ForkExtensionRefresh.runOnce(autoUpdate = true, libraryUpdateRunning = { false }, install = { p ->
+                    installs += p
+                    if (p == broken) error("bad apk")
+                })
+            }
+
+        assertEquals(setOf(broken, fine), installs.toSet())
+        assertEquals(listOf(fine), result.updated)
+        assertEquals(listOf(broken), result.failed)
+    }
+
+    /** Review Focus 5: installing reloads the source, which would fail its series in a running library update. */
+    @Test
+    fun `auto-update waits for a running library update to finish`() {
+        val p = pkg("waits")
+        installed(p, 1)
+        listing = listOf(entry(p, 2))
+        val polls = AtomicInteger()
+
+        val result =
+            runBlocking {
+                ForkExtensionRefresh.runOnce(
+                    autoUpdate = true,
+                    install = {},
+                    libraryUpdateRunning = { polls.incrementAndGet() <= 2 },
+                    pollMs = 10,
+                    maxWaitMs = 1_000,
+                )
+            }
+
+        assertEquals(listOf(p), result.updated)
+        assertEquals(3, polls.get())
+    }
+
+    /** Review Focus 5. */
+    @Test
+    fun `auto-update gives up for this refresh if the library update keeps running`() {
+        val p = pkg("givesup")
+        installed(p, 1)
+        listing = listOf(entry(p, 2))
+
+        val result =
+            runBlocking {
+                ForkExtensionRefresh.runOnce(
+                    autoUpdate = true,
+                    install = { fail("installed during a library update") },
+                    libraryUpdateRunning = { true },
+                    pollMs = 10,
+                    maxWaitMs = 50,
+                )
+            }
+
+        assertTrue(result.deferred)
+        assertEquals(emptyList(), result.updated)
+    }
+
+    @Test
+    fun `auto-update is off unless the property turns it on`() {
+        try {
+            assertFalse(ForkExtensionRefresh.autoUpdateEnabled)
+            System.setProperty(ForkExtensionRefresh.AUTO_UPDATE_PROPERTY, "true")
+            assertTrue(ForkExtensionRefresh.autoUpdateEnabled)
+        } finally {
+            System.clearProperty(ForkExtensionRefresh.AUTO_UPDATE_PROPERTY)
+        }
     }
 }

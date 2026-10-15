@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.StateFlow
 import libcore.net.MimeUtils
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -20,6 +21,7 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.graphql.types.DownloadConversion
+import suwayomi.tachidesk.manga.impl.chapter.refreshChapterPageList
 import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.source.GetSource.getSourceOrNull
 import suwayomi.tachidesk.manga.impl.util.storage.ImageResponse.getImageResponse
@@ -55,6 +57,25 @@ object Page {
         return page.imageUrl!!
     }
 
+    private suspend fun downloadedImageCount(
+        mangaId: Int,
+        chapterId: Int,
+    ): Int = runCatching { ChapterDownloadHelper.getImageCount(mangaId, chapterId) }.getOrDefault(0)
+
+    private fun findPageRow(
+        chapterId: Int,
+        index: Int,
+    ): ResultRow? =
+        transaction {
+            PageTable
+                .selectAll()
+                .where { (PageTable.chapter eq chapterId) }
+                .orderBy(PageTable.index to SortOrder.ASC)
+                .limit(1)
+                .offset(index.toLong())
+                .firstOrNull()
+        }
+
     suspend fun getPageImage(
         mangaId: Int,
         chapterId: Int? = null,
@@ -79,24 +100,26 @@ object Page {
             }
         val chapterId = chapterEntry[ChapterTable.id].value
 
+        var downloadReadFailure: Exception? = null
         try {
             if (chapterEntry[ChapterTable.isDownloaded]) {
                 return ChapterDownloadHelper.getImage(mangaId, chapterId, index)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // ignore and fetch again
+            downloadReadFailure = e
         }
 
         val pageEntry =
-            transaction {
-                PageTable
-                    .selectAll()
-                    .where { (PageTable.chapter eq chapterId) }
-                    .orderBy(PageTable.index to SortOrder.ASC)
-                    .limit(1)
-                    .offset(index.toLong())
-                    .first()
-            }
+            findPageRow(chapterId, index)
+                ?: run {
+                    // Fork (F7): downloaded chapters keep no page rows. Fetch the page list again only if the download is
+                    // gone: refreshing marks the chapter not downloaded, which a bad index or a read error must not do.
+                    if (downloadReadFailure != null && downloadedImageCount(mangaId, chapterId) > 0) throw downloadReadFailure
+                    refreshChapterPageList(mangaId, chapterId)
+                    findPageRow(chapterId, index)
+                }
+                ?: throw NoSuchElementException("Chapter $chapterId has no page $index")
         val tachiyomiPage =
             Page(
                 pageEntry[PageTable.index],

@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import libcore.net.MimeUtils
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
@@ -19,6 +20,7 @@ import suwayomi.tachidesk.manga.impl.util.getChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.PageTable
 import java.io.File
 import java.io.InputStream
 
@@ -113,6 +115,7 @@ abstract class ChaptersFilesProvider<Type : FileType>(
         if (doesUnrecognizedDownloadExist) {
             download.progress = 1f
             step(download, false)
+            deletePageRows()
 
             return true
         }
@@ -177,8 +180,14 @@ abstract class ChaptersFilesProvider<Type : FileType>(
         }
 
         File(cacheChapterDir).deleteRecursively()
+        deletePageRows()
 
         return true
+    }
+
+    /** Fork (F7): a downloaded chapter is read from its files, so its page rows are dead weight (5.3M rows on main). */
+    private fun deletePageRows() {
+        transaction { PageTable.deleteWhere { PageTable.chapter eq chapterId } }
     }
 
     /**

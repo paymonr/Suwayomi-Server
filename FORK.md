@@ -40,3 +40,10 @@ Personal fork of Suwayomi-Server, based on tag `v2.4.2366` (the last single-user
   (`-Dsuwayomi.fork.extensionRefreshHours=N`, 0 = off), logging installed extensions with updates.
   `-Dsuwayomi.fork.autoUpdateExtensions=true` installs them, after any running library update (up to 3 h). A store
   that can't be reached no longer marks its installed extensions obsolete or deletes its uninstalled entries.
+
+## Batch D (2026-10)
+
+- **F10a** — Chromium starts on the first WebView request (an extension's WebView or the WebUI's browser view) instead
+  of at server start. The installation is still checked, and downloaded if needed, at start.
+  `-Dsuwayomi.fork.lazyChromium=false` starts it at server start, as upstream does. The log says
+  `Chromium will start on the first WebView request`, then `Starting Chromium for the first WebView request`.

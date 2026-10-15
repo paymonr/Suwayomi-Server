@@ -129,7 +129,7 @@ class Updater : IUpdater {
         preferences.edit().remove(lastAutomatedUpdateKey).apply()
     }
 
-    private fun autoUpdateTask() {
+    internal fun autoUpdateTask() {
         try {
             val lastAutomatedUpdate = getLastAutomatedUpdateTimestamp()
             saveLastAutomatedUpdateTimestamp()
@@ -144,7 +144,7 @@ class Updater : IUpdater {
                     lastAutomatedUpdate,
                 )})"
             }
-            addCategoriesToUpdateQueue(Category.getCategoryList(), clear = true, forceAll = false)
+            addCategoriesToUpdateQueue(Category.getCategoryList(), clear = true, forceAll = false, scheduled = true)
         } catch (e: Exception) {
             logger.error(e) { "autoUpdateTask: failed due to" }
         }
@@ -336,6 +336,14 @@ class Updater : IUpdater {
         categories: List<CategoryDataClass>,
         clear: Boolean?,
         forceAll: Boolean,
+    ) = addCategoriesToUpdateQueue(categories, clear, forceAll, scheduled = false)
+
+    /** Fork (F8): a [scheduled] run skips quiet series that were checked recently ([ForkSmartUpdate]); manual runs check all. */
+    internal fun addCategoriesToUpdateQueue(
+        categories: List<CategoryDataClass>,
+        clear: Boolean?,
+        forceAll: Boolean,
+        scheduled: Boolean,
     ) {
         scope.launch {
             SyncManager.ensureSync()
@@ -370,7 +378,7 @@ class Updater : IUpdater {
                     .flatMap { CategoryManga.getCategoryMangaList(it.id) }
                     .distinctBy { it.id }
             val mangasToCategoriesMap = CategoryManga.getMangasCategories(categoriesToUpdateMangas.map { it.id })
-            val mangasToUpdate =
+            val eligibleMangas =
                 categoriesToUpdateMangas
                     .asSequence()
                     .filter { it.updateStrategy == UpdateStrategy.ALWAYS_UPDATE }
@@ -398,6 +406,16 @@ class Updater : IUpdater {
                                 mangasToCategoriesMap[it.id]?.contains(category) == true
                             }
                     }.toList()
+            // Fork (F8): scheduled runs skip quiet series that were checked recently. Not suspending: reset() above has
+            // already cancelled this coroutine, which only finishes because nothing below suspends.
+            val notDue =
+                if (scheduled && ForkSmartUpdate.enabled) {
+                    ForkSmartUpdate.skippableMangaIdsOrNone(eligibleMangas.map { it.id })
+                } else {
+                    emptySet()
+                }
+            if (notDue.isNotEmpty()) logger.info { "Smart update: skipping ${notDue.size} quiet series checked recently" }
+            val mangasToUpdate = eligibleMangas.filter { it.id !in notDue }
             val skippedMangas = categoriesToUpdateMangas.subtract(mangasToUpdate.toSet()).toList()
 
             this@Updater.updateStatusCategories = updateStatusCategories

@@ -114,14 +114,17 @@ object ForkExtensionRefresh {
 
         val updated = mutableListOf<String>()
         val failed = mutableListOf<String>()
-        updatable.forEach { extension ->
+        // The wait can last a whole library update, so look again: an extension uninstalled or updated by hand meanwhile
+        // has no update left to install.
+        installedWithUpdates().forEach { extension ->
             try {
                 install(extension.pkgName)
                 updated += extension.pkgName
                 logger.info { "Auto-updated extension ${extension.name}" }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Loading a new version can also fail with a LinkageError (a class AndroidCompat lacks, a failing static
+                // initializer); that one extension fails, the rest still update.
+                if (e is CancellationException || (e !is Exception && e !is LinkageError)) throw e
                 failed += extension.pkgName
                 logger.warn(e) { "Auto-update of extension ${extension.name} failed" }
             }

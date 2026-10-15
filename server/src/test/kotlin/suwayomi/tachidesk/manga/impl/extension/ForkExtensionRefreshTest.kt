@@ -99,6 +99,7 @@ class ForkExtensionRefreshTest : ApplicationTest() {
                 it[contentWarning] = 0
                 it[isInstalled] = true
                 it[storeIndexUrl] = indexUrl
+                it[apkName] = "${pkg.removePrefix(prefix)}-v1.4.$code.apk"
                 it[apkUrl] = "$base/apk/${pkg.removePrefix(prefix)}-v1.4.$code.apk"
                 it[extensionLib] = "1.4"
             }
@@ -177,6 +178,52 @@ class ForkExtensionRefreshTest : ApplicationTest() {
         assertEquals(setOf(broken, fine), installs.toSet())
         assertEquals(listOf(fine), result.updated)
         assertEquals(listOf(broken), result.failed)
+    }
+
+    /** Review Focus 4: a new version needing an Android class that AndroidCompat lacks fails with a LinkageError, not an Exception. */
+    @Test
+    fun `auto-update carries on past an extension that fails to load`() {
+        val broken = pkg("noclass")
+        val fine = pkg("loads")
+        installed(broken, 1)
+        installed(fine, 1)
+        listing = listOf(entry(broken, 2), entry(fine, 2))
+
+        val result =
+            runBlocking {
+                ForkExtensionRefresh.runOnce(autoUpdate = true, libraryUpdateRunning = { false }, install = { p ->
+                    if (p == broken) throw NoClassDefFoundError("android/graphics/Missing")
+                })
+            }
+
+        assertEquals(listOf(fine), result.updated)
+        assertEquals(listOf(broken), result.failed)
+    }
+
+    /** The wait can last a whole library update; an extension uninstalled meanwhile mustn't come back. */
+    @Test
+    fun `auto-update skips an extension uninstalled while it waited`() {
+        val p = pkg("removed")
+        installed(p, 1)
+        listing = listOf(entry(p, 2))
+        val polls = AtomicInteger()
+
+        val result =
+            runBlocking {
+                ForkExtensionRefresh.runOnce(
+                    autoUpdate = true,
+                    install = { fail("reinstalled an extension that was uninstalled") },
+                    libraryUpdateRunning = {
+                        if (polls.incrementAndGet() == 1) Extension.uninstallExtension(p)
+                        polls.get() == 1
+                    },
+                    pollMs = 10,
+                    maxWaitMs = 1_000,
+                )
+            }
+
+        assertEquals(emptyList(), result.updated)
+        assertEquals(false, row(p)!![ExtensionTable.isInstalled])
     }
 
     /** Review Focus 5: installing reloads the source, which would fail its series in a running library update. */

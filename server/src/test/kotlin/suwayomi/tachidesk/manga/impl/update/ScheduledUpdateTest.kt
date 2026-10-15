@@ -1,13 +1,16 @@
 package suwayomi.tachidesk.manga.impl.update
 
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import suwayomi.tachidesk.manga.impl.Category
+import suwayomi.tachidesk.manga.impl.CategoryManga
 import suwayomi.tachidesk.manga.impl.update.SmartUpdateFixture.DAY
 import suwayomi.tachidesk.manga.impl.update.SmartUpdateFixture.HOUR
 import suwayomi.tachidesk.manga.impl.update.SmartUpdateFixture.series
+import suwayomi.tachidesk.manga.model.dataclass.IncludeOrExclude
 import suwayomi.tachidesk.server.serverConfig
 import suwayomi.tachidesk.test.ApplicationTest
 import uy.kohesive.injekt.Injekt
@@ -25,19 +28,31 @@ class ScheduledUpdateTest : ApplicationTest() {
         listOf(serverConfig.excludeUnreadChapters, serverConfig.excludeNotStarted, serverConfig.excludeCompleted)
     }
     private var previous = emptyList<Boolean>()
+    private var categoryId = 0
 
     @BeforeAll
     fun setUp() {
         // upstream's exclusions are on by default and would drop these unread series before F8 sees them
         previous = exclusions.map { it.value }
         exclusions.forEach { it.value = false }
+        // The series go in their own category, set to be included in updates. Another test class deletes every
+        // category, Default too, from the shared test database, and an included category keeps other classes'
+        // library series out of these runs.
+        categoryId = Category.createCategory("smart update ${System.nanoTime()}")
+        Category.updateCategory(categoryId, null, null, IncludeOrExclude.INCLUDE.value, null)
+    }
+
+    @AfterEach
+    fun clearSeries() {
+        updater.reset()
+        SmartUpdateFixture.clear()
     }
 
     @AfterAll
     fun tearDown() {
         exclusions.zip(previous).forEach { (setting, value) -> setting.value = value }
         System.clearProperty(ForkSmartUpdate.ENABLED_PROPERTY)
-        updater.reset()
+        Category.removeCategory(categoryId)
     }
 
     private inner class Fixture {
@@ -47,6 +62,10 @@ class ScheduledUpdateTest : ApplicationTest() {
         val dormantDue = series("dormant, checked 4 d ago", now - 200 * DAY, now - 4 * DAY)
         val noChapters = series("no chapters", null, now - HOUR)
         val all = listOf(active, quiet, dormantDue, noChapters)
+
+        init {
+            all.forEach { CategoryManga.addMangaToCategory(it, categoryId) }
+        }
     }
 
     /** Starts a run with [start], waits for it to end, and returns which of [ids] it checked. */

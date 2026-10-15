@@ -1,6 +1,8 @@
 package suwayomi.tachidesk.manga.impl.update
 
 import kotlinx.serialization.json.JsonObject
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertAndGetId
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
@@ -45,4 +47,9 @@ object SmartUpdateFixture {
             }
             mangaId
         }
+
+    /** Deletes every series made here (chapters and category links cascade), so other test classes never see them. */
+    fun clear() {
+        transaction { MangaTable.deleteWhere { MangaTable.sourceReference eq SOURCE } }
+    }
 }

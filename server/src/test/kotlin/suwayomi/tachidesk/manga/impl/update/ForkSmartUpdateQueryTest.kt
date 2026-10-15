@@ -1,5 +1,6 @@
 package suwayomi.tachidesk.manga.impl.update
 
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import suwayomi.tachidesk.manga.impl.update.SmartUpdateFixture.DAY
 import suwayomi.tachidesk.manga.impl.update.SmartUpdateFixture.HOUR
@@ -33,11 +34,17 @@ object SmartUpdateQueryChecks {
 }
 
 class ForkSmartUpdateQueryTest : ApplicationTest() {
+    @AfterEach
+    fun clear() = SmartUpdateFixture.clear()
+
     @Test
     fun `only quiet series checked recently are skipped`() = SmartUpdateQueryChecks.onlyQuietSeriesCheckedRecentlyAreSkipped()
 }
 
 class ForkSmartUpdatePostgresTest : PostgresTest() {
+    @AfterEach
+    fun clear() = SmartUpdateFixture.clear()
+
     @Test
     fun `only quiet series checked recently are skipped`() = SmartUpdateQueryChecks.onlyQuietSeriesCheckedRecentlyAreSkipped()
 }

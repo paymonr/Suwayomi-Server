@@ -3,7 +3,7 @@ package suwayomi.tachidesk.server.util
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import xyz.nulldev.androidcompat.webkit.CefHelper
@@ -33,7 +33,7 @@ class CEFManagerLazyStartTest {
     fun `Chromium doesn't start at init, only when a WebView asks for it`() =
         runTest {
             CEFManager.initAsync(enabled = true, lazyStart = true, prepare = {}, start = ::fakeStart, startScope = backgroundScope)
-            advanceUntilIdle()
+            runCurrent()
             assertEquals(0, starts)
             assertEquals("fake start", webViewRequest().await()?.message)
             assertEquals(1, starts)
@@ -65,9 +65,10 @@ class CEFManagerLazyStartTest {
     fun `turning CEF off drops a start that hasn't happened yet`() =
         runTest {
             CEFManager.initAsync(enabled = true, lazyStart = true, prepare = {}, start = ::fakeStart, startScope = backgroundScope)
+            runCurrent()
             CEFManager.initAsync(enabled = false, lazyStart = true, prepare = {}, start = ::fakeStart, startScope = backgroundScope)
             assertEquals("CEF is disabled", webViewRequest().await()?.message)
-            advanceUntilIdle()
+            runCurrent()
             assertEquals(0, starts)
         }
 

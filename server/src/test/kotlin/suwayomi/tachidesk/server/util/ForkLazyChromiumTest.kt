@@ -5,7 +5,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
@@ -33,7 +32,7 @@ class ForkLazyChromiumTest {
     fun `nothing starts while no WebView is waiting`() =
         runTest {
             ForkLazyChromium.startOnFirstWaiter(backgroundScope, app, ::fakeStart)
-            advanceUntilIdle()
+            runCurrent()
             assertEquals(0, starts)
         }
 
@@ -78,9 +77,11 @@ class ForkLazyChromiumTest {
     @Test
     fun `a cancelled start never runs, even when a WebView asks later`() =
         runTest {
-            ForkLazyChromium.startOnFirstWaiter(backgroundScope, app, ::fakeStart).cancel()
+            val start = ForkLazyChromium.startOnFirstWaiter(backgroundScope, app, ::fakeStart)
+            runCurrent()
+            start.cancel()
             val waiter = launch { app.first { it != null } }
-            advanceUntilIdle()
+            runCurrent()
             assertEquals(0, starts)
             waiter.cancel()
         }

@@ -1,8 +1,9 @@
 package suwayomi.tachidesk.manga.impl.update
 
-import org.jetbrains.exposed.v1.core.JoinType
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.max
+import org.jetbrains.exposed.v1.core.wrapAsExpression
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.manga.model.table.ChapterTable
@@ -15,6 +16,8 @@ import java.time.Instant
  * chapters found more than a day late (worst ~66 h). Manual updates check everything.
  */
 object ForkSmartUpdate {
+    private val logger = KotlinLogging.logger {}
+
     const val ENABLED_PROPERTY = "suwayomi.fork.smartUpdate"
 
     private const val DAY = 86_400L
@@ -22,9 +25,14 @@ object ForkSmartUpdate {
     /** A due check may run this much early: runs take up to ~47 min on main, so the next one can start a little before 24 h. */
     const val SLACK_SECONDS = 3 * 3_600L
 
-    /** On unless `-Dsuwayomi.fork.smartUpdate=false`. */
+    /** On unless `-Dsuwayomi.fork.smartUpdate=false` (any case). A value it can't read is logged and leaves it on. */
     val enabled: Boolean
-        get() = System.getProperty(ENABLED_PROPERTY)?.toBooleanStrictOrNull() ?: true
+        get() =
+            when (val value = System.getProperty(ENABLED_PROPERTY)?.trim()?.lowercase()) {
+                null, "", "true" -> true
+                "false" -> false
+                else -> true.also { logger.warn { "Ignoring -D$ENABLED_PROPERTY=$value: expected true or false" } }
+            }
 
     /**
      * Whether a scheduled run at [now] checks a series.
@@ -52,7 +60,8 @@ object ForkSmartUpdate {
 
     /**
      * The series among [mangaIds] that a scheduled run at [now] can skip. Only library series are looked at, and a
-     * series this doesn't find is never skipped. One grouped query over library chapters (~245k rows on main).
+     * series this doesn't find is never skipped. The newest chapter per series comes from the `fork_chapter_manga_fetched_at`
+     * index (~20 ms for 2,778 library series on main, against ~200 ms for a join over their ~245k chapters).
      */
     fun skippableMangaIds(
         mangaIds: Collection<Int>,
@@ -60,13 +69,12 @@ object ForkSmartUpdate {
     ): Set<Int> {
         if (mangaIds.isEmpty()) return emptySet()
         val asked = mangaIds.toSet()
-        val lastFoundAt = ChapterTable.fetchedAt.max()
+        val lastFoundAt =
+            wrapAsExpression<Long>(ChapterTable.select(ChapterTable.fetchedAt.max()).where { ChapterTable.manga eq MangaTable.id })
         return transaction {
             MangaTable
-                .join(ChapterTable, JoinType.LEFT, MangaTable.id, ChapterTable.manga)
                 .select(MangaTable.id, MangaTable.chaptersLastFetchedAt, lastFoundAt)
                 .where { MangaTable.inLibrary eq true }
-                .groupBy(MangaTable.id, MangaTable.chaptersLastFetchedAt)
                 .mapNotNull { row ->
                     row[MangaTable.id].value.takeIf {
                         it in asked && !isDue(row[lastFoundAt], row[MangaTable.chaptersLastFetchedAt], now)
@@ -74,4 +82,16 @@ object ForkSmartUpdate {
                 }.toSet()
         }
     }
+
+    /** [skippableMangaIds], or nothing if [query] fails: skipping only saves work, so a failure must not lose the run. */
+    fun skippableMangaIdsOrNone(
+        mangaIds: Collection<Int>,
+        query: (Collection<Int>) -> Set<Int> = { skippableMangaIds(it) },
+    ): Set<Int> =
+        try {
+            query(mangaIds)
+        } catch (e: Exception) {
+            logger.warn(e) { "Smart update: couldn't find quiet series, checking all of them" }
+            emptySet()
+        }
 }

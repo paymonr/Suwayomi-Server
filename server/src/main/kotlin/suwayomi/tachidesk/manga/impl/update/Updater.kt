@@ -378,16 +378,7 @@ class Updater : IUpdater {
                     .flatMap { CategoryManga.getCategoryMangaList(it.id) }
                     .distinctBy { it.id }
             val mangasToCategoriesMap = CategoryManga.getMangasCategories(categoriesToUpdateMangas.map { it.id })
-            // Fork (F8): scheduled runs skip quiet series that were checked recently. Not suspending: reset() above has
-            // already cancelled this coroutine, which only finishes because nothing below suspends.
-            val notDue =
-                if (scheduled && ForkSmartUpdate.enabled) {
-                    ForkSmartUpdate.skippableMangaIds(categoriesToUpdateMangas.map { it.id })
-                } else {
-                    emptySet()
-                }
-            if (notDue.isNotEmpty()) logger.info { "Smart update: skipping ${notDue.size} quiet series checked recently" }
-            val mangasToUpdate =
+            val eligibleMangas =
                 categoriesToUpdateMangas
                     .asSequence()
                     .filter { it.updateStrategy == UpdateStrategy.ALWAYS_UPDATE }
@@ -414,8 +405,17 @@ class Updater : IUpdater {
                             !excludedCategories.any { category ->
                                 mangasToCategoriesMap[it.id]?.contains(category) == true
                             }
-                    }.filter { it.id !in notDue }
-                    .toList()
+                    }.toList()
+            // Fork (F8): scheduled runs skip quiet series that were checked recently. Not suspending: reset() above has
+            // already cancelled this coroutine, which only finishes because nothing below suspends.
+            val notDue =
+                if (scheduled && ForkSmartUpdate.enabled) {
+                    ForkSmartUpdate.skippableMangaIdsOrNone(eligibleMangas.map { it.id })
+                } else {
+                    emptySet()
+                }
+            if (notDue.isNotEmpty()) logger.info { "Smart update: skipping ${notDue.size} quiet series checked recently" }
+            val mangasToUpdate = eligibleMangas.filter { it.id !in notDue }
             val skippedMangas = categoriesToUpdateMangas.subtract(mangasToUpdate.toSet()).toList()
 
             this@Updater.updateStatusCategories = updateStatusCategories

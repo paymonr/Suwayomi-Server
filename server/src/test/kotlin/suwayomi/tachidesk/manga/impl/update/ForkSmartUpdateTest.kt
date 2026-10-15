@@ -2,6 +2,7 @@ package suwayomi.tachidesk.manga.impl.update
 
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -48,6 +49,22 @@ class ForkSmartUpdateTest {
     fun `a series with no chapters, or never checked, is due`() {
         assertTrue(due(quietDays = null, checkedHoursAgo = 1))
         assertTrue(ForkSmartUpdate.isDue(now - 200 * day, lastCheckedAt = 0, now = now))
+    }
+
+    /** Review M8: the switch works whatever the case, and a value it can't read leaves the default (and is logged). */
+    @Test
+    fun `the property is read case-insensitively`() {
+        System.setProperty(ForkSmartUpdate.ENABLED_PROPERTY, " FALSE ")
+        assertFalse(ForkSmartUpdate.enabled)
+        System.setProperty(ForkSmartUpdate.ENABLED_PROPERTY, "nonsense")
+        assertTrue(ForkSmartUpdate.enabled)
+    }
+
+    /** Review M7: smart skipping only saves work; if its query fails, the run checks everything instead of being lost. */
+    @Test
+    fun `a failing query skips nothing`() {
+        assertEquals(emptySet(), ForkSmartUpdate.skippableMangaIdsOrNone(listOf(1, 2)) { error("database unavailable") })
+        assertEquals(setOf(2), ForkSmartUpdate.skippableMangaIdsOrNone(listOf(1, 2)) { setOf(2) })
     }
 
     @Test

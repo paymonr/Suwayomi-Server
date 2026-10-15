@@ -1,16 +1,25 @@
 package suwayomi.tachidesk.manga.impl.update
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
+import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.update
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.slf4j.LoggerFactory
 import suwayomi.tachidesk.manga.impl.Category
 import suwayomi.tachidesk.manga.impl.CategoryManga
 import suwayomi.tachidesk.manga.impl.update.SmartUpdateFixture.DAY
 import suwayomi.tachidesk.manga.impl.update.SmartUpdateFixture.HOUR
 import suwayomi.tachidesk.manga.impl.update.SmartUpdateFixture.series
 import suwayomi.tachidesk.manga.model.dataclass.IncludeOrExclude
+import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.server.serverConfig
 import suwayomi.tachidesk.test.ApplicationTest
 import uy.kohesive.injekt.Injekt
@@ -56,7 +65,7 @@ class ScheduledUpdateTest : ApplicationTest() {
     }
 
     private inner class Fixture {
-        private val now = Instant.now().epochSecond
+        val now = Instant.now().epochSecond
         val active = series("active", now - 2 * DAY, now - HOUR)
         val quiet = series("quiet, checked 2 h ago", now - 60 * DAY, now - 2 * HOUR)
         val dormantDue = series("dormant, checked 4 d ago", now - 200 * DAY, now - 4 * DAY)
@@ -94,6 +103,31 @@ class ScheduledUpdateTest : ApplicationTest() {
     fun `a scheduled run skips a quiet series that was checked recently`() {
         val f = Fixture()
         assertEquals(setOf(f.active, f.dormantDue, f.noChapters), checkedBy(f.all) { updater.autoUpdateTask() })
+    }
+
+    /** Review M6: the log line counts only the series this filter removes, not ones another filter already dropped. */
+    @Test
+    fun `the smart update log line counts only the series it skips`() {
+        val f = Fixture()
+        val fetchOnce = series("fetch once, quiet, checked 2 h ago", f.now - 60 * DAY, f.now - 2 * HOUR)
+        transaction { MangaTable.update({ MangaTable.id eq fetchOnce }) { it[updateStrategy] = UpdateStrategy.ONLY_FETCH_ONCE.name } }
+        CategoryManga.addMangaToCategory(fetchOnce, categoryId)
+
+        val lines = updaterLogDuring { checkedBy(f.all + fetchOnce) { updater.autoUpdateTask() } }
+
+        assertEquals(listOf("Smart update: skipping 1 quiet series checked recently"), lines.filter { it.startsWith("Smart update") })
+    }
+
+    private fun updaterLogDuring(block: () -> Unit): List<String> {
+        val logger = LoggerFactory.getLogger(Updater::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+        }
+        return appender.list.map { it.formattedMessage }
     }
 
     @Test

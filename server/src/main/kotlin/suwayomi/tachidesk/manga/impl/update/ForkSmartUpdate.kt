@@ -1,5 +1,14 @@
 package suwayomi.tachidesk.manga.impl.update
 
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.max
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.manga.model.table.MangaTable
+import java.time.Instant
+
 /**
  * Fork-only (F8): a scheduled library update checks a series less often once it has gone quiet, meaning no new chapter
  * has been found for a while. Replaying main's last 60 days (2026-10): 53–56% fewer checks, and 0.3–0.4% of new
@@ -39,5 +48,30 @@ object ForkSmartUpdate {
                 else -> 3 * DAY
             }
         return now - lastCheckedAt >= checkEvery - SLACK_SECONDS
+    }
+
+    /**
+     * The series among [mangaIds] that a scheduled run at [now] can skip. Only library series are looked at, and a
+     * series this doesn't find is never skipped. One grouped query over library chapters (~245k rows on main).
+     */
+    fun skippableMangaIds(
+        mangaIds: Collection<Int>,
+        now: Long = Instant.now().epochSecond,
+    ): Set<Int> {
+        if (mangaIds.isEmpty()) return emptySet()
+        val asked = mangaIds.toSet()
+        val lastFoundAt = ChapterTable.fetchedAt.max()
+        return transaction {
+            MangaTable
+                .join(ChapterTable, JoinType.LEFT, MangaTable.id, ChapterTable.manga)
+                .select(MangaTable.id, MangaTable.chaptersLastFetchedAt, lastFoundAt)
+                .where { MangaTable.inLibrary eq true }
+                .groupBy(MangaTable.id, MangaTable.chaptersLastFetchedAt)
+                .mapNotNull { row ->
+                    row[MangaTable.id].value.takeIf {
+                        it in asked && !isDue(row[lastFoundAt], row[MangaTable.chaptersLastFetchedAt], now)
+                    }
+                }.toSet()
+        }
     }
 }

@@ -45,6 +45,7 @@ import suwayomi.tachidesk.graphql.server.primitives.greaterNotUnique
 import suwayomi.tachidesk.graphql.server.primitives.lessNotUnique
 import suwayomi.tachidesk.graphql.types.MangaNodeList
 import suwayomi.tachidesk.graphql.types.MangaType
+import suwayomi.tachidesk.manga.impl.fork.RecentlyShownManga
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.MangaStatus
 import suwayomi.tachidesk.manga.model.table.MangaTable
@@ -55,7 +56,10 @@ class MangaQuery {
     fun manga(
         dataFetchingEnvironment: DataFetchingEnvironment,
         id: Int,
-    ): CompletableFuture<MangaType> = dataFetchingEnvironment.getValueFromDataLoader("MangaDataLoader", id)
+    ): CompletableFuture<MangaType> {
+        RecentlyShownManga.record(listOf(id)) // Fork (F12): the prune keeps series a client opened in the last day
+        return dataFetchingEnvironment.getValueFromDataLoader("MangaDataLoader", id)
+    }
 
     enum class MangaOrderBy(
         override val column: Column<*>,

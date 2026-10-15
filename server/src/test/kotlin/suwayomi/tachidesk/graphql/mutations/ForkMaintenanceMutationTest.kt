@@ -66,4 +66,20 @@ class ForkMaintenanceMutationTest : ApplicationTest() {
 
         assertEquals(emptySet(), PruneFixture.existing(ids.prunable))
     }
+
+    /** A series that was opened again without a refresh keeps its old fetch times; opening it must still protect it. */
+    @Test
+    fun `a series opened through the manga query in the last day survives a real run`() {
+        val ids = PruneFixture.create()
+        val (opened, other) = ids.prunable
+        val fixtureIds = ids.prunable + ids.kept.values + ids.excluded + ids.queued
+        val exclude = PruneFixture.allMangaIds() - fixtureIds.toSet() + ids.excluded + ids.queued
+
+        execute("{ manga(id: $opened) { id } }")
+        execute(
+            """mutation { pruneNonLibraryManga(input: {excludeMangaIds: [${exclude.joinToString()}], dryRun: false}) { mangaCount } }""",
+        )
+
+        assertEquals(setOf(opened), PruneFixture.existing(listOf(opened, other)))
+    }
 }

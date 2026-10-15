@@ -33,12 +33,11 @@ import java.time.Instant
  * Browsing a source stores every series it shows; on main those rows hold 62% of all chapters.
  *
  * Kept: library series; any read, bookmarked, downloaded or partly read chapter; categories, tracking, manga or chapter
- * meta; series fetched within [GRACE_SECONDS] (someone may be looking at it); series with a queued download; the
- * Local source; and [excludeMangaIds] (suwayomi-dm passes the ids it references).
+ * meta; series fetched, shown in a browse listing or opened within [GRACE_SECONDS] (someone may be looking at it, see
+ * [RecentlyShownManga]); series with a queued download; the Local source; and [excludeMangaIds] (suwayomi-dm passes the
+ * ids it references).
  *
- * A series that was only listed while browsing has no fetch time (`last_fetched_at` stays 0 until it's opened), so the
- * grace period doesn't cover it: a browse listing left open across a prune can show series that no longer exist until
- * it's reloaded.
+ * [RecentlyShownManga] lives in memory, so after a restart only fetch times protect a series until clients show it again.
  */
 object NonLibraryMangaPrune {
     const val GRACE_SECONDS = 24 * 60 * 60L
@@ -56,15 +55,17 @@ object NonLibraryMangaPrune {
         dryRun: Boolean,
         nowEpochSeconds: Long = Instant.now().epochSecond,
         queuedMangaIds: () -> Set<Int> = { DownloadManager.getStatus().queue.mapTo(HashSet()) { it.mangaId } },
+        shownMangaIds: () -> Set<Int> = { RecentlyShownManga.since(nowEpochSeconds - GRACE_SECONDS) },
         coverDirs: List<File> = listOf(File(applicationDirs.tempThumbnailCacheRoot), File(applicationDirs.thumbnailDownloadsRoot)),
     ): Result {
         val fetchedBefore = nowEpochSeconds - GRACE_SECONDS
         val queued = queuedMangaIds()
-        val ids = candidates(fetchedBefore).filterNot { it in excludeMangaIds || it in queued }
+        val shown = shownMangaIds()
+        val ids = candidates(fetchedBefore).filterNot { it in excludeMangaIds || it in queued || it in shown }
         var chapterCount = 0L
         val pruned = mutableListOf<Int>()
         ids.chunked(BATCH).forEach { batch ->
-            val result = pruneBatch(batch, fetchedBefore, excludeMangaIds, queuedMangaIds(), dryRun)
+            val result = pruneBatch(batch, fetchedBefore, excludeMangaIds + shownMangaIds(), queuedMangaIds(), dryRun)
             pruned += result.mangaIds
             chapterCount += result.chapterCount
         }
@@ -74,7 +75,8 @@ object NonLibraryMangaPrune {
 
     /**
      * Deletes the series of [batch] that still match the rule. A batch runs minutes after the candidates were listed, so
-     * the rule, the exclusions and the download queue are checked again in the batch's own transaction.
+     * the rule, the exclusions (including series shown since) and the download queue are checked again in the batch's
+     * own transaction.
      */
     internal fun pruneBatch(
         batch: List<Int>,

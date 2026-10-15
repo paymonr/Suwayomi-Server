@@ -36,3 +36,7 @@ Personal fork of Suwayomi-Server, based on tag `v2.4.2366` (the last single-user
   under 30 days every run, 30–180 days daily, over 180 days every 3 days, counted from its last successful check, so
   a failing series stays due. Manual updates check everything. `-Dsuwayomi.fork.smartUpdate=false` turns it off.
   Each scheduled run logs `Smart update: skipping N quiet series checked recently`.
+- **F3** — every store's extension list is refreshed every 6 h, first 10 min after start
+  (`-Dsuwayomi.fork.extensionRefreshHours=N`, 0 = off), logging installed extensions with updates.
+  `-Dsuwayomi.fork.autoUpdateExtensions=true` installs them, after any running library update (up to 3 h). A store
+  that can't be reached no longer marks its installed extensions obsolete or deletes its uninstalled entries.

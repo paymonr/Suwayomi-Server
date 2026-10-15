@@ -17,6 +17,7 @@ import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.statements.BatchUpdateStatement
 import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.statements.toExecutable
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
@@ -25,6 +26,7 @@ import suwayomi.tachidesk.manga.impl.extension.Extension.proxyExtensionIconUrl
 import suwayomi.tachidesk.manga.model.dataclass.ContentWarning
 import suwayomi.tachidesk.manga.model.dataclass.ExtensionDataClass
 import suwayomi.tachidesk.manga.model.dataclass.ExtensionInfo
+import suwayomi.tachidesk.manga.model.table.ExtensionStoreTable
 import suwayomi.tachidesk.manga.model.table.ExtensionTable
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
@@ -37,11 +39,17 @@ object ExtensionsList {
 
     suspend fun fetchExtensions() {
         val allExtensions = mutableListOf<ExtensionInfo>()
+        // Fork (F3): a store whose list couldn't be read keeps its extensions as they are, instead of having them marked
+        // obsolete (installed) or deleted (not installed) until the next refresh that reaches it
+        val configuredStores =
+            transaction { ExtensionStoreTable.select(ExtensionStoreTable.indexUrl).map { it[ExtensionStoreTable.indexUrl] } }.toSet()
+        val readStores = mutableSetOf<String>()
 
         ExtensionStoreService.getAndRefresh().forEach { store ->
             try {
                 val extensions = ExtensionStoreService.getExtensions(store)
                 allExtensions.addAll(extensions)
+                readStores += store.indexUrl
             } catch (e: Exception) {
                 logger.warn(e) {
                     "Failed to fetch extensions for store: ${store.indexUrl}"
@@ -49,7 +57,7 @@ object ExtensionsList {
             }
         }
 
-        updateExtensionDatabase(allExtensions)
+        updateExtensionDatabase(allExtensions, unreadStores = configuredStores - readStores)
     }
 
     suspend fun fetchExtensionsCached() {
@@ -91,7 +99,10 @@ object ExtensionsList {
 
     private val updateExtensionDatabaseMutex = Mutex()
 
-    private suspend fun updateExtensionDatabase(foundExtensions: List<ExtensionInfo>) {
+    private suspend fun updateExtensionDatabase(
+        foundExtensions: List<ExtensionInfo>,
+        unreadStores: Set<String> = emptySet(),
+    ) {
         updateExtensionDatabaseMutex.withLock {
             transaction {
                 val uniqueExtensions =
@@ -109,13 +120,19 @@ object ExtensionsList {
                 val extensionsToUpdate = mutableListOf<Pair<ExtensionInfo, ResultRow>>()
                 val extensionsToInsert = mutableListOf<ExtensionInfo>()
                 val extensionsToDelete =
-                    installedExtensions.filter { it.value[ExtensionTable.storeIndexUrl] != null }.mapNotNull { (pkgName, extension) ->
-                        extension.takeUnless { uniqueExtensions.any { it.pkgName == pkgName } }
-                    }
+                    installedExtensions
+                        .filter { it.value[ExtensionTable.storeIndexUrl].let { url -> url != null && url !in unreadStores } }
+                        .mapNotNull { (pkgName, extension) ->
+                            extension.takeUnless { uniqueExtensions.any { it.pkgName == pkgName } }
+                        }
 
                 uniqueExtensions.forEach {
                     val extension = installedExtensions[it.pkgName]
                     if (extension != null) {
+                        // Fork (F3): an installed extension from a store that couldn't be read stays as it is, even if
+                        // another store lists the same package
+                        val fromUnreadStore = extension[ExtensionTable.storeIndexUrl]?.let { url -> url in unreadStores } == true
+                        if (extension[ExtensionTable.isInstalled] && fromUnreadStore) return@forEach
                         extensionsToUpdate.add(it to extension)
                     } else {
                         extensionsToInsert.add(it)

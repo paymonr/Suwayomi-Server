@@ -1,5 +1,6 @@
 package suwayomi.tachidesk.manga.impl.download.fileProvider.impl
 
+import eu.kanade.tachiyomi.source.local.metadata.COMIC_INFO_FILE
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
@@ -22,9 +23,33 @@ import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.FilterInputStream
 import java.io.InputStream
-import java.util.zip.Deflater
+import java.util.zip.ZipEntry
 
 private val applicationDirs: ApplicationDirs by injectLazy()
+
+/** Fork (F11): page images are already compressed, so they're STORED; only ComicInfo.xml is deflated. */
+internal fun writeCbz(
+    pagesFolder: File,
+    outputFile: File,
+) {
+    ZipArchiveOutputStream(outputFile).use { zipOut ->
+        pagesFolder.listFiles()?.sortedBy { it.name }?.forEach {
+            val entry = ZipArchiveEntry(it.name)
+            entry.time = 0L
+            entry.method = if (it.name == COMIC_INFO_FILE) ZipEntry.DEFLATED else ZipEntry.STORED
+            // a known size keeps commons-compress from adding a Zip64 extra field to every local header
+            entry.size = it.length()
+            try {
+                zipOut.putArchiveEntry(entry)
+                it.inputStream().use { inputStream ->
+                    inputStream.copyTo(zipOut)
+                }
+            } finally {
+                zipOut.closeArchiveEntry()
+            }
+        }
+    }
+}
 
 class ArchiveProvider(
     mangaId: Int,
@@ -71,24 +96,7 @@ class ArchiveProvider(
             outputFile.createNewFile()
         }
 
-        ZipArchiveOutputStream(outputFile.outputStream()).use { zipOut ->
-            zipOut.setMethod(ZipArchiveOutputStream.DEFLATED)
-            zipOut.setLevel(Deflater.DEFAULT_COMPRESSION)
-            if (chapterCacheFolder.isDirectory) {
-                chapterCacheFolder.listFiles()?.sortedBy { it.name }?.forEach {
-                    val entry = ZipArchiveEntry(it.name)
-                    entry.time = 0L
-                    try {
-                        zipOut.putArchiveEntry(entry)
-                        it.inputStream().use { inputStream ->
-                            inputStream.copyTo(zipOut)
-                        }
-                    } finally {
-                        zipOut.closeArchiveEntry()
-                    }
-                }
-            }
-        }
+        writeCbz(chapterCacheFolder, outputFile)
 
         if (chapterCacheFolder.exists() && chapterCacheFolder.isDirectory) {
             chapterCacheFolder.deleteRecursively()

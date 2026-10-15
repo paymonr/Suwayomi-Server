@@ -48,21 +48,22 @@ private suspend fun getMangaDir(mangaId: Int): String =
         getMangaDir(mangaEntry[MangaTable.title], source.toString())
     }
 
+private fun getChapterDirName(
+    title: String,
+    scanlator: String?,
+): String =
+    SafePath.buildValidFilename(
+        when {
+            scanlator != null -> "${scanlator}_$title"
+            else -> title
+        },
+    )
+
 private suspend fun getChapterDir(
     mangaId: Int,
     title: String,
     scanlator: String?,
-): String {
-    val chapterDir =
-        SafePath.buildValidFilename(
-            when {
-                scanlator != null -> "${scanlator}_$title"
-                else -> title
-            },
-        )
-
-    return getMangaDir(mangaId) + "/" + chapterDir
-}
+): String = getMangaDir(mangaId) + "/" + getChapterDirName(title, scanlator)
 
 private suspend fun getChapterDir(
     mangaId: Int,
@@ -166,33 +167,47 @@ private fun updateDownloadDir(
 
 private val mutexByManga = ConcurrentHashMap<Int, Mutex>()
 
-suspend fun updateChapterDownloadDir(
-    oldChapter: ChapterDataClass,
-    newChapter: ChapterDataClass,
-): Boolean {
-    if (oldChapter.mangaId != newChapter.mangaId) {
-        return false
-    }
+/**
+ * Renames download folders of one series' chapters, e.g. during one chapter-list sync.
+ * The series folder is looked up once, on the first rename, not six times per renamed chapter.
+ */
+class ChapterDownloadDirs(
+    private val mangaId: Int,
+) {
+    private var mangaDir: String? = null
 
-    // the folder name comes only from name and scanlator; if neither changed there's nothing to rename
-    if (oldChapter.name == newChapter.name && oldChapter.scanlator == newChapter.scanlator) {
-        return true
-    }
+    private suspend fun mangaDir(): String = mangaDir ?: getMangaDir(mangaId).also { mangaDir = it }
 
-    return mutexByManga.getOrPut(oldChapter.mangaId) { Mutex() }.withLock {
-        val currentDownloadDir = getChapterDownloadPath(oldChapter.mangaId, oldChapter.name, oldChapter.scanlator)
-        val newDownloadDir = getChapterDownloadPath(oldChapter.mangaId, newChapter.name, newChapter.scanlator)
-        val currentDownloadCbz = getChapterCbzPath(oldChapter.mangaId, oldChapter.name, oldChapter.scanlator)
-        val newDownloadCbz = getChapterCbzPath(oldChapter.mangaId, newChapter.name, newChapter.scanlator)
+    /** return value says if the chapter's download is still usable under its new name */
+    suspend fun update(
+        oldChapter: ChapterDataClass,
+        newChapter: ChapterDataClass,
+    ): Boolean {
+        if (oldChapter.mangaId != mangaId || newChapter.mangaId != mangaId) {
+            return false
+        }
 
-        val currentCacheDir = getChapterCachePath(oldChapter.mangaId, oldChapter.name, oldChapter.scanlator)
-        val newCacheDir = getChapterCachePath(oldChapter.mangaId, newChapter.name, newChapter.scanlator)
+        // the folder name comes only from name and scanlator; if neither changed there's nothing to rename
+        if (oldChapter.name == newChapter.name && oldChapter.scanlator == newChapter.scanlator) {
+            return true
+        }
 
-        withIOContext {
-            val dirRename = updateDownloadDir(currentDownloadDir, newDownloadDir, currentCacheDir, newCacheDir)
-            val cbzRename = updateDownloadDir(currentDownloadCbz, newDownloadCbz, currentCacheDir, newCacheDir)
+        return mutexByManga.getOrPut(mangaId) { Mutex() }.withLock {
+            val mangaDir = mangaDir()
+            val oldName = getChapterDirName(oldChapter.name, oldChapter.scanlator)
+            val newName = getChapterDirName(newChapter.name, newChapter.scanlator)
 
-            dirRename && cbzRename
+            val currentDownloadDir = "${applicationDirs.mangaDownloadsRoot}/$mangaDir/$oldName"
+            val newDownloadDir = "${applicationDirs.mangaDownloadsRoot}/$mangaDir/$newName"
+            val currentCacheDir = "${applicationDirs.tempMangaCacheRoot}/$mangaDir/$oldName"
+            val newCacheDir = "${applicationDirs.tempMangaCacheRoot}/$mangaDir/$newName"
+
+            withIOContext {
+                val dirRename = updateDownloadDir(currentDownloadDir, newDownloadDir, currentCacheDir, newCacheDir)
+                val cbzRename = updateDownloadDir("$currentDownloadDir.cbz", "$newDownloadDir.cbz", currentCacheDir, newCacheDir)
+
+                dirRename && cbzRename
+            }
         }
     }
 }

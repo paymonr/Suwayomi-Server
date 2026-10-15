@@ -26,6 +26,7 @@ import suwayomi.tachidesk.graphql.mutations.ChapterMutation
 import suwayomi.tachidesk.graphql.mutations.DownloadMutation
 import suwayomi.tachidesk.graphql.mutations.ExtensionMutation
 import suwayomi.tachidesk.graphql.mutations.ExtensionStoreMutation
+import suwayomi.tachidesk.graphql.mutations.ForkMaintenanceMutation
 import suwayomi.tachidesk.graphql.mutations.ImageMutation
 import suwayomi.tachidesk.graphql.mutations.InfoMutation
 import suwayomi.tachidesk.graphql.mutations.KoreaderSyncMutation
@@ -125,6 +126,7 @@ object GraphQLSchemaProvider {
                         TopLevelObject(DownloadMutation()),
                         TopLevelObject(ExtensionMutation()),
                         TopLevelObject(ExtensionStoreMutation()),
+                        TopLevelObject(ForkMaintenanceMutation()),
                         TopLevelObject(ImageMutation()),
                         TopLevelObject(InfoMutation()),
                         TopLevelObject(KoreaderSyncMutation()),

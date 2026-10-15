@@ -18,6 +18,7 @@ import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.statements.toExecutable
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import suwayomi.tachidesk.manga.impl.fork.RecentlyShownManga
 import suwayomi.tachidesk.manga.impl.util.source.GetSource.getSourceOrStub
 import suwayomi.tachidesk.manga.model.dataclass.PagedMangaListDataClass
 import suwayomi.tachidesk.manga.model.table.MangaTable
@@ -125,7 +126,7 @@ object MangaList {
                 mangaUrlsToId[manga.url]
                     ?: throw Exception("MangaList::insertOrGet($sourceId): Something went wrong inserting browsed source mangas")
             }
-        }
+        }.also { RecentlyShownManga.record(it) } // Fork (F12): the prune keeps series a client was shown in the last day
 
     fun MangasPage.processEntries(sourceId: Long): PagedMangaListDataClass {
         val mangasPage = this

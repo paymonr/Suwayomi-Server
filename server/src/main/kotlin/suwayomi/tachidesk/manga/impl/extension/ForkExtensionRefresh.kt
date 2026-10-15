@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
@@ -27,10 +28,18 @@ object ForkExtensionRefresh {
     const val DEFAULT_INTERVAL_HOURS = 6L
     private val FIRST_RUN_DELAY = 10.minutes
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scheduledRun = Mutex()
 
-    /** Hours between refreshes (`-Dsuwayomi.fork.extensionRefreshHours=N`); 0 turns the schedule off. */
+    /** Hours between refreshes (`-Dsuwayomi.fork.extensionRefreshHours=N`, whole hours); 0 turns the schedule off. */
     val intervalHours: Long
-        get() = System.getProperty(INTERVAL_PROPERTY)?.toLongOrNull()?.coerceAtLeast(0) ?: DEFAULT_INTERVAL_HOURS
+        get() {
+            val value = System.getProperty(INTERVAL_PROPERTY)?.trim()
+            if (value.isNullOrEmpty()) return DEFAULT_INTERVAL_HOURS
+            return value.toLongOrNull()?.coerceAtLeast(0)
+                ?: DEFAULT_INTERVAL_HOURS.also {
+                    logger.warn { "Ignoring -D$INTERVAL_PROPERTY=$value: expected whole hours; using $DEFAULT_INTERVAL_HOURS" }
+                }
+        }
 
     /** Schedules [runOnce], first 10 min after start; returns the scheduler's task id, or null when it's off. */
     fun schedule(): String? {
@@ -40,21 +49,32 @@ object ForkExtensionRefresh {
             return null
         }
         return HAScheduler.schedule(
-            {
-                scope.launch {
-                    try {
-                        runOnce()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        logger.warn(e) { "Scheduled extension refresh failed" }
-                    }
-                }
-            },
+            { scope.launch { runScheduled() } },
             hours.hours.inWholeMilliseconds,
             FIRST_RUN_DELAY.inWholeMilliseconds,
             "fork-extension-refresh",
         )
+    }
+
+    /**
+     * One scheduled refresh at a time: a refresh can wait up to 3 h for a library update, longer than a short interval.
+     * A failure is logged, not thrown. Returns false if the previous refresh was still running, so this one was skipped.
+     */
+    internal suspend fun runScheduled(run: suspend () -> Unit = { runOnce() }): Boolean {
+        if (!scheduledRun.tryLock()) {
+            logger.info { "Scheduled extension refresh skipped: the previous one is still running" }
+            return false
+        }
+        try {
+            run()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn(e) { "Scheduled extension refresh failed" }
+        } finally {
+            scheduledRun.unlock()
+        }
+        return true
     }
 
     data class RefreshResult(
@@ -74,9 +94,14 @@ object ForkExtensionRefresh {
 
     const val AUTO_UPDATE_PROPERTY = "suwayomi.fork.autoUpdateExtensions"
 
-    /** Off unless `-Dsuwayomi.fork.autoUpdateExtensions=true`. */
+    /** Off unless `-Dsuwayomi.fork.autoUpdateExtensions=true` (any case). A value it can't read is logged and leaves it off. */
     val autoUpdateEnabled: Boolean
-        get() = System.getProperty(AUTO_UPDATE_PROPERTY)?.toBooleanStrictOrNull() ?: false
+        get() =
+            when (val value = System.getProperty(AUTO_UPDATE_PROPERTY)?.trim()?.lowercase()) {
+                null, "", "false" -> false
+                "true" -> true
+                else -> false.also { logger.warn { "Ignoring -D$AUTO_UPDATE_PROPERTY=$value: expected true or false" } }
+            }
 
     /**
      * Refreshes every store's list and logs installed extensions with updates. With [autoUpdate], installs each one,
@@ -115,8 +140,22 @@ object ForkExtensionRefresh {
         val updated = mutableListOf<String>()
         val failed = mutableListOf<String>()
         // The wait can last a whole library update, so look again: an extension uninstalled or updated by hand meanwhile
-        // has no update left to install.
-        installedWithUpdates().forEach { extension ->
+        // has no update left to install. One whose store wasn't read this time (say, after a restart with the store down)
+        // has no update information to install from, so it waits for a refresh that reads its store.
+        val (toInstall, unread) = installedWithUpdates().partition { ExtensionsList.updateMap.containsKey(it.pkgName) }
+        if (unread.isNotEmpty()) {
+            logger.info {
+                "Extension auto-update skipped ${unread.joinToString { it.name }}: no update information from their store this time"
+            }
+        }
+        for ((index, extension) in toInstall.withIndex()) {
+            // a library update that started meanwhile would fail the reloaded source's series
+            if (index > 0 && libraryUpdateRunning()) {
+                logger.info {
+                    "Extension auto-update paused: a library update started; the next refresh installs the other ${toInstall.size - index}"
+                }
+                return RefreshResult(withUpdates, updated, failed, deferred = true)
+            }
             try {
                 install(extension.pkgName)
                 updated += extension.pkgName

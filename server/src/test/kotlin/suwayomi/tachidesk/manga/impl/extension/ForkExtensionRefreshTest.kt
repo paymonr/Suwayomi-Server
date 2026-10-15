@@ -3,6 +3,7 @@ package suwayomi.tachidesk.manga.impl.extension
 import io.javalin.Javalin
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -32,8 +33,14 @@ class ForkExtensionRefreshTest : ApplicationTest() {
     @Volatile private var listing = emptyList<String>()
 
     @Volatile private var indexStatus = 200
+
+    @Volatile private var repoStatus = 200
+
+    /** A second store's listing, for a package two stores list. */
+    @Volatile private var otherListing = emptyList<String>()
     private val base get() = "http://127.0.0.1:${store.port()}/repo"
     private val indexUrl get() = "$base/repo.json"
+    private val otherIndexUrl get() = "http://127.0.0.1:${store.port()}/other/repo.json"
     private val prefix = "eu.kanade.tachiyomi.extension.en.f3"
 
     @BeforeAll
@@ -42,12 +49,20 @@ class ForkExtensionRefreshTest : ApplicationTest() {
             Javalin
                 .create { config ->
                     config.routes.get("/repo/repo.json") { ctx ->
-                        ctx.contentType("application/json").result(
+                        ctx.status(repoStatus).contentType("application/json").result(
                             """{"index_v2":null,"meta":{"name":"F3 fixture","shortName":"F3","website":"https://fixture.invalid","signingKeyFingerprint":"00"}}""",
                         )
                     }
                     config.routes.get("/repo/index.min.json") { ctx ->
                         ctx.status(indexStatus).contentType("application/json").result(listing.joinToString(",", "[", "]"))
+                    }
+                    config.routes.get("/other/repo.json") { ctx ->
+                        ctx.contentType("application/json").result(
+                            """{"index_v2":null,"meta":{"name":"F3 other","shortName":"F3O","website":"https://fixture.invalid","signingKeyFingerprint":"00"}}""",
+                        )
+                    }
+                    config.routes.get("/other/index.min.json") { ctx ->
+                        ctx.contentType("application/json").result(otherListing.joinToString(",", "[", "]"))
                     }
                 }.start(0)
         ExtensionStoreService.upsert(
@@ -61,18 +76,34 @@ class ForkExtensionRefreshTest : ApplicationTest() {
                 extensionListUrl = null,
             ),
         )
+        ExtensionStoreService.upsert(
+            ExtensionStore(
+                otherIndexUrl,
+                "F3 other",
+                "F3O",
+                "00",
+                ExtensionStore.Contact("https://fixture.invalid", null),
+                isLegacy = true,
+                extensionListUrl = null,
+            ),
+        )
     }
 
     @AfterEach
     fun deleteFixtureExtensions() {
         transaction { ExtensionTable.deleteWhere { ExtensionTable.pkgName like "$prefix%" } }
         listing = emptyList()
+        otherListing = emptyList()
         indexStatus = 200
+        repoStatus = 200
+        ExtensionsList.updateMap.keys.removeIf { it.startsWith(prefix) }
     }
 
     @AfterAll
     fun stopStore() {
-        transaction { ExtensionStoreTable.deleteWhere { ExtensionStoreTable.indexUrl eq indexUrl } }
+        // captured first: inside deleteWhere the table is the receiver, so `indexUrl` would mean its column
+        val fixtureStores = listOf(indexUrl, otherIndexUrl)
+        transaction { ExtensionStoreTable.deleteWhere { ExtensionStoreTable.indexUrl inList fixtureStores } }
         store.stop()
     }
 
@@ -88,6 +119,7 @@ class ForkExtensionRefreshTest : ApplicationTest() {
     private fun installed(
         pkg: String,
         code: Long,
+        hasUpdate: Boolean = false,
     ) {
         transaction {
             ExtensionTable.insert {
@@ -98,6 +130,7 @@ class ForkExtensionRefreshTest : ApplicationTest() {
                 it[lang] = "en"
                 it[contentWarning] = 0
                 it[isInstalled] = true
+                it[this.hasUpdate] = hasUpdate
                 it[storeIndexUrl] = indexUrl
                 it[apkName] = "${pkg.removePrefix(prefix)}-v1.4.$code.apk"
                 it[apkUrl] = "$base/apk/${pkg.removePrefix(prefix)}-v1.4.$code.apk"
@@ -277,6 +310,97 @@ class ForkExtensionRefreshTest : ApplicationTest() {
             assertFalse(ForkExtensionRefresh.autoUpdateEnabled)
             System.setProperty(ForkExtensionRefresh.AUTO_UPDATE_PROPERTY, "true")
             assertTrue(ForkExtensionRefresh.autoUpdateEnabled)
+        } finally {
+            System.clearProperty(ForkExtensionRefresh.AUTO_UPDATE_PROPERTY)
+        }
+    }
+
+    /** Review M5: a store whose repo.json fails is dropped before its index is read; its extensions stay as they were too. */
+    @Test
+    fun `a store whose repo json can't be read leaves its extensions as they were`() {
+        val kept = pkg("keptrepo")
+        val available = pkg("availablerepo")
+        installed(kept, 1)
+        listing = listOf(entry(kept, 1), entry(available, 1))
+        runBlocking { ForkExtensionRefresh.runOnce() }
+        repoStatus = 500
+
+        runBlocking { ForkExtensionRefresh.runOnce() }
+
+        assertEquals(false, row(kept)!![ExtensionTable.isObsolete])
+        assertNotNull(row(available), "the uninstalled entry was deleted")
+    }
+
+    /** Review M4: another store listing the package (older) doesn't flag or repoint it while its own store is down. */
+    @Test
+    fun `an extension stays with its own store while that store can't be reached`() {
+        val p = pkg("shared")
+        installed(p, 2)
+        otherListing = listOf(entry(p, 1))
+        indexStatus = 500
+
+        runBlocking { ForkExtensionRefresh.runOnce() }
+
+        val row = row(p)!!
+        assertEquals(false, row[ExtensionTable.isObsolete])
+        assertEquals(indexUrl, row[ExtensionTable.storeIndexUrl])
+    }
+
+    /** Review M3: after a restart with its store down, a stale "has update" flag has no update information to install from. */
+    @Test
+    fun `auto-update skips an extension whose store wasn't read this time`() {
+        val p = pkg("stale")
+        installed(p, 1, hasUpdate = true)
+        indexStatus = 500
+
+        val result =
+            runBlocking {
+                ForkExtensionRefresh.runOnce(
+                    autoUpdate = true,
+                    libraryUpdateRunning = { false },
+                    install = { fail("installed without update information") },
+                )
+            }
+
+        assertEquals(listOf(p), result.withUpdates)
+        assertEquals(emptyList(), result.failed)
+    }
+
+    /** Review M2: a library update that starts between installs stops the rest until the next refresh. */
+    @Test
+    fun `auto-update stops when a library update starts between installs`() {
+        val first = pkg("first")
+        val second = pkg("second")
+        installed(first, 1)
+        installed(second, 1)
+        listing = listOf(entry(first, 2), entry(second, 2))
+        val polls = AtomicInteger()
+        val installs = mutableListOf<String>()
+
+        val result =
+            runBlocking {
+                ForkExtensionRefresh.runOnce(
+                    autoUpdate = true,
+                    install = { installs += it },
+                    libraryUpdateRunning = { polls.incrementAndGet() > 1 },
+                    pollMs = 10,
+                    maxWaitMs = 1_000,
+                )
+            }
+
+        assertEquals(1, installs.size)
+        assertEquals(installs, result.updated)
+        assertTrue(result.deferred)
+    }
+
+    /** Review M8. */
+    @Test
+    fun `the auto-update property is read case-insensitively`() {
+        try {
+            System.setProperty(ForkExtensionRefresh.AUTO_UPDATE_PROPERTY, " TRUE ")
+            assertTrue(ForkExtensionRefresh.autoUpdateEnabled)
+            System.setProperty(ForkExtensionRefresh.AUTO_UPDATE_PROPERTY, "yes please")
+            assertFalse(ForkExtensionRefresh.autoUpdateEnabled)
         } finally {
             System.clearProperty(ForkExtensionRefresh.AUTO_UPDATE_PROPERTY)
         }

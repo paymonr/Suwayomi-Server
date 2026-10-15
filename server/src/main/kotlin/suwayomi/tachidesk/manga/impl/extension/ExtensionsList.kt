@@ -129,6 +129,10 @@ object ExtensionsList {
                 uniqueExtensions.forEach {
                     val extension = installedExtensions[it.pkgName]
                     if (extension != null) {
+                        // Fork (F3): an installed extension from a store that couldn't be read stays as it is, even if
+                        // another store lists the same package
+                        val fromUnreadStore = extension[ExtensionTable.storeIndexUrl]?.let { url -> url in unreadStores } == true
+                        if (extension[ExtensionTable.isInstalled] && fromUnreadStore) return@forEach
                         extensionsToUpdate.add(it to extension)
                     } else {
                         extensionsToInsert.add(it)

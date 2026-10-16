@@ -47,3 +47,42 @@ Personal fork of Suwayomi-Server, based on tag `v2.4.2366` (the last single-user
   of at server start. The installation is still checked, and downloaded if needed, at start.
   `-Dsuwayomi.fork.lazyChromium=false` starts it at server start, as upstream does. The log says
   `Chromium will start on the first WebView request`, then `Starting Chromium for the first WebView request`.
+
+## Batch E (2026-10)
+
+APIs for suwayomi-dm, so it stops reading the whole library, writing to the database and parsing the log.
+
+- **Change stamps** — `manga.fork_changed_at` (epoch ms), kept current by seven `fork_` triggers. PostgreSQL only: the
+  triggers are plpgsql, so the stock image (v2.4.2366) keeps the stamps current on a database this has touched, and a
+  rollback to it needs no cleanup. H2 gets no column and no triggers (H2 triggers are Java classes a stock image
+  wouldn't have). A series is stamped when one of its listed fields changes (title, url, source, thumbnail, artist,
+  author, description, genre, status, in library), and, while it's in the library, when a chapter's listed fields
+  change (name, scanlator, number, upload date, downloaded, page count, read, bookmark), a chapter is added or
+  removed, or its categories change. Fetch times and reading progress don't count. The chapter trigger's function is
+  `SECURITY DEFINER`, so suwayomi-dm's graft role, which may update only two chapter columns, still works. The log
+  says `ForkChangeTracking: on`.
+
+  **Before running an upstream image newer than v2.4.2366, or merging upstream's M0066 into the fork, remove them.**
+  The triggers' WHEN clauses depend on `chapter.read`, `chapter.bookmark`, `manga.in_library` and
+  `manga.in_library_at`. Upstream master's `M0066_AddUsers` drops those columns, and Postgres refuses the drop while
+  the triggers exist, so that migration fails and the server doesn't start. Stock v2.4.2366 is unaffected.
+
+  ```sql
+  DROP TRIGGER IF EXISTS fork_manga_changed_insert ON suwayomi.manga;
+  DROP TRIGGER IF EXISTS fork_manga_changed_update ON suwayomi.manga;
+  DROP TRIGGER IF EXISTS fork_chapter_changed_insert ON suwayomi.chapter;
+  DROP TRIGGER IF EXISTS fork_chapter_changed_update ON suwayomi.chapter;
+  DROP TRIGGER IF EXISTS fork_chapter_changed_delete ON suwayomi.chapter;
+  DROP TRIGGER IF EXISTS fork_category_manga_changed_insert ON suwayomi.categorymanga;
+  DROP TRIGGER IF EXISTS fork_category_manga_changed_delete ON suwayomi.categorymanga;
+  DROP FUNCTION IF EXISTS suwayomi.fork_stamp_manga();
+  DROP FUNCTION IF EXISTS suwayomi.fork_touch_library_manga();
+  ALTER TABLE suwayomi.manga DROP COLUMN IF EXISTS fork_changed_at;
+  ```
+- **`MangaType.changedAt`** and the **`changedAt` manga filter** — the stamp, as a LongString. On H2 the field is
+  null and the filter fails with "changedAt needs change tracking, which runs on PostgreSQL only".
+- **`setChaptersDownloadState(input: { ids, isDownloaded, pageCount })`** — sets chapters' downloaded flag and page
+  count without touching files, for downloads placed by another tool (suwayomi-dm's grafts). All or nothing; a
+  page count above 0 is required when marking downloaded, and clearing the flag leaves it alone.
+- **`DownloadType.failureReason { exception message }`** — why the last attempt failed: the exception's class name
+  and message, as the downloader's `failed due to` log line prints them. The log line is unchanged.

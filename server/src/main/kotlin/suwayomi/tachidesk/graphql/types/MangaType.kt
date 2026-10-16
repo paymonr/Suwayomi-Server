@@ -7,6 +7,7 @@
 
 package suwayomi.tachidesk.graphql.types
 
+import com.expediagroup.graphql.generator.annotations.GraphQLDescription
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import graphql.schema.DataFetchingEnvironment
@@ -132,6 +133,14 @@ class MangaType(
         dataFetchingEnvironment.getValueFromDataLoader<Int, MangaChapterStats>("ChapterFlagCountForMangaDataLoader", id).thenApply {
             it.bookmarkCount
         }
+
+    @GraphQLDescription(
+        "Fork-only: ms since epoch of the series' last change a library listing shows (its listed fields, its " +
+            "chapters' listed fields, chapters added or removed, categories). Null when the server doesn't track " +
+            "changes (H2, or tracking failed to install at start).",
+    )
+    fun changedAt(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<Long?> =
+        dataFetchingEnvironment.getValueFromDataLoader<Int, Long?>("MangaChangedAtDataLoader", id)
 
     fun hasDuplicateChapters(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<Boolean> =
         dataFetchingEnvironment.getValueFromDataLoader("HasDuplicateChaptersForMangaDataLoader", id)

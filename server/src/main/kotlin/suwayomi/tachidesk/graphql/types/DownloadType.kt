@@ -78,6 +78,8 @@ class DownloadType(
     val progress: Float,
     val tries: Int,
     val position: Int,
+    @GraphQLDescription("Fork-only: why the last attempt failed; null if it hasn't failed")
+    val failureReason: DownloadFailureType? = null,
 ) : Node {
     constructor(downloadChapter: DownloadQueueItem, position: Int) : this(
         downloadChapter.chapterId,
@@ -91,6 +93,7 @@ class DownloadType(
         downloadChapter.progress,
         downloadChapter.tries,
         position,
+        downloadChapter.failure?.let(::DownloadFailureType),
     )
 
     fun manga(dataFetchingEnvironment: DataFetchingEnvironment): CompletableFuture<MangaType> {
@@ -191,4 +194,13 @@ data class DownloadNodeList(
             )
         }
     }
+}
+
+@GraphQLDescription("Fork-only: why a download's last attempt failed, as the server log prints it")
+data class DownloadFailureType(
+    @GraphQLDescription("The exception's class name, e.g. eu.kanade.tachiyomi.network.HttpException")
+    val exception: String,
+    val message: String?,
+) {
+    constructor(failure: suwayomi.tachidesk.manga.impl.download.model.DownloadFailure) : this(failure.exception, failure.message)
 }

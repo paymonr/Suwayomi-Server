@@ -23,6 +23,7 @@ import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.manga.impl.ChapterDownloadHelper
 import suwayomi.tachidesk.manga.impl.chapter.getChapterDownloadReadyById
+import suwayomi.tachidesk.manga.impl.download.model.DownloadFailure
 import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
 import suwayomi.tachidesk.manga.impl.download.model.DownloadState.Downloading
 import suwayomi.tachidesk.manga.impl.download.model.DownloadState.Error
@@ -176,6 +177,7 @@ class Downloader(
                 ChapterDownloadHelper.download(download.mangaId, download.chapterId, download, scope) { downloadChapter, immediate ->
                     step(PROGRESS, downloadChapter, immediate)
                 }
+                download.failure = null
                 download.state = Finished
                 transaction {
                     ChapterTable.update(
@@ -197,11 +199,13 @@ class Downloader(
                 notify(false, PAUSED, download)
             } catch (e: EmptyChapterException) {
                 downloadLogger.warn(e) { "failed due to" }
+                download.failure = DownloadFailure.of(e)
                 download.tries = MAX_RETRIES
                 download.state = Error
                 notify(false, ERROR, download)
             } catch (e: Exception) {
                 downloadLogger.warn(e) { "failed due to" }
+                download.failure = DownloadFailure.of(e)
                 download.tries++
                 download.state = Queued
                 if (download.tries >= MAX_RETRIES) {

@@ -18,6 +18,8 @@ class DownloadQueueItem(
     var state: DownloadState = Queued,
     var progress: Float = 0f,
     var tries: Int = 0,
+    /** Fork-only: the last attempt's failure, null once it finishes. */
+    var failure: DownloadFailure? = null,
 ) {
     override fun toString(): String = "$mangaId - $chapterId | state= $state, tries= $tries, progress= $progress"
 }

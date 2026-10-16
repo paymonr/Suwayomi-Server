@@ -47,3 +47,24 @@ Personal fork of Suwayomi-Server, based on tag `v2.4.2366` (the last single-user
   of at server start. The installation is still checked, and downloaded if needed, at start.
   `-Dsuwayomi.fork.lazyChromium=false` starts it at server start, as upstream does. The log says
   `Chromium will start on the first WebView request`, then `Starting Chromium for the first WebView request`.
+
+## Batch E (2026-10)
+
+APIs for suwayomi-dm, so it stops reading the whole library, writing to the database and parsing the log.
+
+- **Change stamps** — `manga.fork_changed_at` (epoch ms), kept current by seven `fork_` triggers. PostgreSQL only:
+  the triggers are plpgsql, so the stock image keeps the stamps current on a database this has touched, and a
+  rollback needs no cleanup. H2 gets no column and no triggers (H2 triggers are Java classes a stock image wouldn't
+  have). A series is stamped when one of its listed fields changes (title, url, source, thumbnail, artist, author,
+  description, genre, status, in library), and, while it's in the library, when a chapter's listed fields change
+  (name, scanlator, number, upload date, downloaded, page count, read, bookmark), a chapter is added or removed, or
+  its categories change. Fetch times and reading progress don't count. The chapter trigger's function is
+  `SECURITY DEFINER`, so suwayomi-dm's graft role, which may update only two chapter columns, still works. The log
+  says `ForkChangeTracking: on`.
+- **`MangaType.changedAt`** and the **`changedAt` manga filter** — the stamp, as a LongString. On H2 the field is
+  null and the filter fails with "changedAt needs change tracking, which runs on PostgreSQL only".
+- **`setChaptersDownloadState(input: { ids, isDownloaded, pageCount })`** — sets chapters' downloaded flag and page
+  count without touching files, for downloads placed by another tool (suwayomi-dm's grafts). All or nothing; a
+  page count above 0 is required when marking downloaded, and clearing the flag leaves it alone.
+- **`DownloadType.failureReason { exception message }`** — why the last attempt failed: the exception's class name
+  and message, as the downloader's `failed due to` log line prints them. The log line is unchanged.

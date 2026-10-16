@@ -37,6 +37,7 @@ object ForkSchema {
 
     fun apply() {
         apply(indexes, LOCK_TIMEOUT_MS)
+        ForkChangeTracking.apply()
     }
 
     /** Returns the names of the indexes that couldn't be created or rebuilt. */

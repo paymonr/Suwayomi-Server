@@ -30,6 +30,7 @@ import suwayomi.tachidesk.graphql.dataLoaders.LastReadChapterForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.LatestFetchedChapterForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.LatestReadChapterForMangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.LatestUploadedChapterForMangaDataLoader
+import suwayomi.tachidesk.graphql.dataLoaders.MangaChangedAtDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.MangaDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.MangaForCategoryDataLoader
 import suwayomi.tachidesk.graphql.dataLoaders.MangaForSourceDataLoader
@@ -61,6 +62,7 @@ class TachideskDataLoaderRegistryFactory {
                 LatestUploadedChapterForMangaDataLoader(),
                 FirstUnreadChapterForMangaDataLoader(),
                 HighestNumberedChapterForMangaDataLoader(),
+                MangaChangedAtDataLoader(),
                 GlobalMetaDataLoader(),
                 ChapterMetaDataLoader(),
                 MangaMetaDataLoader(),

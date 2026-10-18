@@ -2,8 +2,8 @@ package suwayomi.tachidesk.server.fork
 
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
+import xyz.nulldev.androidcompat.webkit.KcefWebSettings
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 class ForkUserAgentTest {
     @AfterEach
@@ -12,9 +12,23 @@ class ForkUserAgentTest {
     }
 
     @Test
-    fun `the default is a current Chrome`() {
+    fun `without the property the default applies`() {
         assertEquals(ForkUserAgent.DEFAULT, ForkUserAgent.value)
-        assertTrue("Chrome/156.0.0.0" in ForkUserAgent.DEFAULT)
+    }
+
+    /**
+     * keiyoushi extensions (AllManga) give their WebViews client hints worked out from the user agent, except the brand
+     * list (`Sec-CH-UA`), which keeps the glue's default; a user agent of another Chrome version then disagrees with it.
+     */
+    @Test
+    fun `the default's Chrome version is the one the WebView's brand list claims`() {
+        val chromium =
+            KcefWebSettings
+                .defaultUserAgentMetadata()
+                .brands
+                ?.single { it.brand == "Chromium" }
+                ?.version
+        assertEquals(chromium, Regex("""Chrome/(\d+)\.""").find(ForkUserAgent.DEFAULT)?.groupValues?.get(1), ForkUserAgent.DEFAULT)
     }
 
     @Test

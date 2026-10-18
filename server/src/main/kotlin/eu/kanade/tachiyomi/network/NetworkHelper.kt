@@ -51,7 +51,7 @@ class NetworkHelper(
 
     private val userAgent =
         MutableStateFlow(
-            ForkUserAgent.value, // Fork (F11): was a hard-coded Chrome 120 user agent
+            ForkUserAgent.value, // Fork (F11): upstream hard-codes its default user agent here
         )
     val userAgentFlow = userAgent.asStateFlow()
 

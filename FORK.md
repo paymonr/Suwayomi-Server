@@ -16,6 +16,21 @@ Personal fork of Suwayomi-Server, based on tag `v2.4.2366` (the last single-user
 - AndroidCompat, extension loading and network interceptors are kept identical to upstream, so
   upstream's extension-compatibility fixes cherry-pick cleanly.
 
+## Upstream cherry-picks
+
+Picked with `-x`, so each commit names its upstream original.
+
+- **2026-10-18:** WebView boundary glue (#2357, `f9fa6628`): `WebView.getFactory()` and the androidx.webkit glue, so
+  extensions that check WebView features (`USER_AGENT_METADATA`) find them. Its one conflict, the default user agent in
+  `NetworkHelper.kt`, keeps F11's `ForkUserAgent.value` and takes upstream's string as F11's default. Also extension
+  preference fixes #2346 (`f1356311`) and #2343 (`ed65c816`). What changes for WebViews:
+  - They get the user agent through DevTools emulation, so the header and `navigator.userAgent` agree.
+  - They send client hints only when an extension sets them. keiyoushi's extensions (AllManga) do, working out platform,
+    mobile and version from the user agent, but the brand list (`Sec-CH-UA`) stays Chromium 149. A WebView whose
+    extension sets none now sends none; before, it sent KCEF's own Chromium 144 Linux hints.
+  - Cloudflare clearance cookies solved under the old Windows Chrome 156 user agent don't match the new one: those
+    sources may need one new solve.
+
 ## Batch B (2026-10)
 
 - **F9** — a page that fails with an I/O error, HTTP 5xx or 429 is retried 3× (2/4/8 s) before its chapter fails.
@@ -24,8 +39,11 @@ Personal fork of Suwayomi-Server, based on tag `v2.4.2366` (the last single-user
   counted. The page counts from 1; a wrapped network error also names its innermost cause, e.g. `IOException
   (SocketTimeoutException): timeout`; only the message's first line is kept, at most 200 characters.
 - **F7** — a downloaded chapter's page rows are deleted; if its download is gone later, the page list is fetched again.
-- **F11** — default user agent Chrome 156, override with `-Dsuwayomi.fork.userAgent=…`; CBZ images are STORED
-  (ComicInfo.xml deflated); no MySQL-only pool properties.
+- **F11** — a configurable user agent (`-Dsuwayomi.fork.userAgent=…`); CBZ images are STORED (ComicInfo.xml
+  deflated); no MySQL-only pool properties. The default was Chrome 156 on Windows until the upstream cherry-picks
+  above; it's now upstream's Android Chrome 149, because the WebView glue's brand list says Chromium 149. **Keep an
+  override on Chrome 149:** another version makes keiyoushi WebViews (AllManga) send a user agent and client hints that
+  disagree.
 - **F5** — a subscription's data-loader caches are cleared after every event (fresh `isDownloaded`, no growth).
 - **F6** — Jackson writes GraphQL responses straight to the response instead of building one String first. Not
   `ctx.jsonStream`: Javalin pipes that through a 1 KB buffer on another thread, which was ~20× slower on 56 MB.

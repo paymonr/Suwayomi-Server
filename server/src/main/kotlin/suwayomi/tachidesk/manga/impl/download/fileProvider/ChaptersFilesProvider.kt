@@ -140,7 +140,7 @@ abstract class ChaptersFilesProvider<Type : FileType>(
                 // the downloader's step throws once this chapter is dequeued or moved down, which also ends a retry wait
                 withPageRetries(
                     wait = { ms -> delayChecking(ms) { step(download, false) } },
-                    onRetry = { retry, ms, cause -> logPageRetry(download.sourceId, download.chapterId, pageNum, retry, ms, cause) },
+                    onRetry = pageRetryReporter(download, pageNum),
                 ) {
                     Page.getPageImageDownload(
                         mangaId = download.mangaId,

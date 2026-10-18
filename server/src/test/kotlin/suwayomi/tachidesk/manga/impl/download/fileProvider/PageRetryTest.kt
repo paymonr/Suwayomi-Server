@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
+import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
 import java.io.IOException
 import java.net.SocketTimeoutException
 import kotlin.test.assertEquals
@@ -32,13 +33,10 @@ class PageRetryTest {
         val result =
             runCatching {
                 runBlocking {
-                    withPageRetries(wait = { waits += it }, onRetry = {
-                        retry,
-                        waitMs,
-                        cause,
-                        ->
-                        reported += Triple(retry, waitMs, cause)
-                    }) {
+                    withPageRetries(
+                        wait = { waits += it },
+                        onRetry = { retry, waitMs, cause -> reported += Triple(retry, waitMs, cause) },
+                    ) {
                         failures.getOrNull(attempts++)?.let { throw it }
                         "page"
                     }
@@ -67,27 +65,84 @@ class PageRetryTest {
     }
 
     @Test
-    fun `the retry log line names the source, chapter, page and HTTP status`() {
+    fun `each retry is reported before its wait`() {
+        val events = mutableListOf<String>()
+        var attempts = 0
+        runBlocking {
+            withPageRetries(
+                wait = { events += "wait $it" },
+                onRetry = { retry, _, _ -> events += "retry $retry" },
+            ) { if (attempts++ < 2) throw HttpException(503) }
+        }
+        assertEquals(listOf("retry 1", "wait 2000", "retry 2", "wait 4000"), events)
+    }
+
+    /** The "Page retry" lines [block] logs; each must be INFO. */
+    private fun retryLines(block: () -> Unit): List<String> {
         val root = LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME) as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         root.addAppender(appender)
         try {
-            logPageRetry(
-                sourceId = 2131019126180322627L,
-                chapterId = 673520,
-                page = 4,
-                retry = 1,
-                waitMs = 2_000L,
-                cause = HttpException(429),
-            )
+            block()
         } finally {
             root.detachAppender(appender)
         }
-        val line = appender.list.single { it.formattedMessage.startsWith("Page retry") }
-        assertEquals(Level.INFO, line.level)
+        val lines = appender.list.filter { it.formattedMessage.startsWith("Page retry") }
+        lines.forEach { assertEquals(Level.INFO, it.level, it.formattedMessage) }
+        return lines.map { it.formattedMessage }
+    }
+
+    @Test
+    fun `the retry log line names the source, chapter, page counted from 1 and HTTP status`() {
+        val lines =
+            retryLines {
+                logPageRetry(
+                    sourceId = 2131019126180322627L,
+                    chapterId = 673520,
+                    page = 4,
+                    retry = 1,
+                    waitMs = 2_000L,
+                    cause = HttpException(429),
+                )
+            }
         assertEquals(
-            "Page retry 1/3 in 2 s: source=2131019126180322627 chapter=673520 page=4 after HttpException: HTTP error 429",
-            line.formattedMessage,
+            listOf("Page retry 1/3 in 2 s: source=2131019126180322627 chapter=673520 page=5 after HttpException: HTTP error 429"),
+            lines,
+        )
+    }
+
+    @Test
+    fun `a queued chapter's reporter logs its source and chapter, not its manga`() {
+        val item = DownloadQueueItem(chapterId = 673520, chapterIndex = 7, mangaId = 394, sourceId = 2131019126180322627L, pageCount = 20)
+        val lines = retryLines { pageRetryReporter(item, page = 0)(2, 4_000L, HttpException(503)) }
+        assertEquals(
+            listOf("Page retry 2/3 in 4 s: source=2131019126180322627 chapter=673520 page=1 after HttpException: HTTP error 503"),
+            lines,
+        )
+    }
+
+    @Test
+    fun `a network failure wrapped in an IOException names the innermost cause`() {
+        val lines =
+            retryLines {
+                logPageRetry(1L, 2, 0, 1, 2_000L, IOException("timeout", SocketTimeoutException("timeout")))
+            }
+        assertEquals(listOf("Page retry 1/3 in 2 s: source=1 chapter=2 page=1 after IOException (SocketTimeoutException): timeout"), lines)
+    }
+
+    @Test
+    fun `only a message's first line is logged, cut to 200 characters`() {
+        val lines =
+            retryLines {
+                logPageRetry(1L, 2, 0, 1, 2_000L, IOException("first line\nsecond line"))
+                logPageRetry(1L, 2, 0, 1, 2_000L, IOException("x".repeat(500)))
+            }
+        assertEquals(
+            listOf(
+                "Page retry 1/3 in 2 s: source=1 chapter=2 page=1 after IOException: first line",
+                "Page retry 1/3 in 2 s: source=1 chapter=2 page=1 after IOException: " + "x".repeat(200),
+            ),
+            lines,
         )
     }
 

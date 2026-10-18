@@ -1,11 +1,16 @@
 package suwayomi.tachidesk.manga.impl.download.fileProvider
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import eu.kanade.tachiyomi.network.HttpException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.net.SocketTimeoutException
 import kotlin.test.assertEquals
@@ -16,22 +21,74 @@ class PageRetryTest {
         val result: Result<String>,
         val waits: List<Long>,
         val attempts: Int,
+        val reported: List<Triple<Int, Long, Throwable>>,
     )
 
     /** Runs a page whose n-th attempt throws failures[n], and succeeds once they run out. */
     private fun runPage(vararg failures: Throwable): Run {
         val waits = mutableListOf<Long>()
+        val reported = mutableListOf<Triple<Int, Long, Throwable>>()
         var attempts = 0
         val result =
             runCatching {
                 runBlocking {
-                    withPageRetries(wait = { waits += it }) {
+                    withPageRetries(wait = { waits += it }, onRetry = {
+                        retry,
+                        waitMs,
+                        cause,
+                        ->
+                        reported += Triple(retry, waitMs, cause)
+                    }) {
                         failures.getOrNull(attempts++)?.let { throw it }
                         "page"
                     }
                 }
             }
-        return Run(result, waits, attempts)
+        return Run(result, waits, attempts, reported)
+    }
+
+    @Test
+    fun `each retry is reported with its number, its wait and the failure before it`() {
+        val first = HttpException(429)
+        val second = SocketTimeoutException("read timed out")
+        val run = runPage(first, second)
+        assertEquals(listOf(Triple(1, 2_000L, first), Triple(2, 4_000L, second)), run.reported)
+    }
+
+    @Test
+    fun `a page given up after three retries reports the three retries, not the last failure`() {
+        val run = runPage(*Array(10) { HttpException(502) })
+        assertEquals(listOf(1, 2, 3), run.reported.map { it.first })
+    }
+
+    @Test
+    fun `a failure that is not retried is not reported`() {
+        assertEquals(emptyList(), runPage(HttpException(404)).reported)
+    }
+
+    @Test
+    fun `the retry log line names the source, chapter, page and HTTP status`() {
+        val root = LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        root.addAppender(appender)
+        try {
+            logPageRetry(
+                sourceId = 2131019126180322627L,
+                chapterId = 673520,
+                page = 4,
+                retry = 1,
+                waitMs = 2_000L,
+                cause = HttpException(429),
+            )
+        } finally {
+            root.detachAppender(appender)
+        }
+        val line = appender.list.single { it.formattedMessage.startsWith("Page retry") }
+        assertEquals(Level.INFO, line.level)
+        assertEquals(
+            "Page retry 1/3 in 2 s: source=2131019126180322627 chapter=673520 page=4 after HttpException: HTTP error 429",
+            line.formattedMessage,
+        )
     }
 
     @Test

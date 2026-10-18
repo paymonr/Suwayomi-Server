@@ -1,9 +1,12 @@
 package suwayomi.tachidesk.manga.impl.download.fileProvider
 
 import eu.kanade.tachiyomi.network.HttpException
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import java.io.IOException
 import java.util.concurrent.CancellationException
+
+private val logger = KotlinLogging.logger {}
 
 /** Fork-only (F9): the waits before each retry of a page. Three retries, then the chapter fails as before. */
 val PAGE_RETRY_DELAYS_MS = listOf(2_000L, 4_000L, 8_000L)
@@ -29,10 +32,14 @@ fun isRetryablePageFailure(e: Throwable): Boolean =
         else -> e.cause?.let(::isRetryablePageFailure) ?: false
     }
 
-/** Runs [block], waiting [delaysMs] and retrying while it fails with a retryable error; the last error is rethrown. */
+/**
+ * Runs [block], waiting [delaysMs] and retrying while it fails with a retryable error; the last error is rethrown.
+ * [onRetry] hears about each retry before its wait: its number from 1, the wait, and the failure before it.
+ */
 suspend fun <T> withPageRetries(
     delaysMs: List<Long> = PAGE_RETRY_DELAYS_MS,
     wait: suspend (Long) -> Unit = { delay(it) },
+    onRetry: (retry: Int, waitMs: Long, cause: Exception) -> Unit = { _, _, _ -> },
     block: suspend () -> T,
 ): T {
     var retries = 0
@@ -41,8 +48,25 @@ suspend fun <T> withPageRetries(
             return block()
         } catch (e: Exception) {
             if (retries >= delaysMs.size || !isRetryablePageFailure(e)) throw e
-            wait(delaysMs[retries++])
+            val waitMs = delaysMs[retries++]
+            onRetry(retries, waitMs, e)
+            wait(waitMs)
         }
+    }
+}
+
+/** Fork-only (F9): one line per page retry, so a source's retries and their HTTP statuses can be counted from the log. */
+fun logPageRetry(
+    sourceId: Long,
+    chapterId: Int,
+    page: Int,
+    retry: Int,
+    waitMs: Long,
+    cause: Throwable,
+) {
+    logger.info {
+        "Page retry $retry/${PAGE_RETRY_DELAYS_MS.size} in ${waitMs / 1000} s: source=$sourceId chapter=$chapterId page=$page " +
+            "after ${cause::class.simpleName}: ${cause.message}"
     }
 }
 

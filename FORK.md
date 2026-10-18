@@ -19,7 +19,10 @@ Personal fork of Suwayomi-Server, based on tag `v2.4.2366` (the last single-user
 ## Batch B (2026-10)
 
 - **F9** — a page that fails with an I/O error, HTTP 5xx or 429 is retried 3× (2/4/8 s) before its chapter fails.
-  A 404 fails at once. `Retry-After` isn't read (the network layer stays upstream's).
+  A 404 fails at once. `Retry-After` isn't read (the network layer stays upstream's). Each retry logs
+  `Page retry 1/3 in 2 s: source=… chapter=… page=… after HttpException: HTTP error 429`, so a source's retries can be
+  counted. The page counts from 1; a wrapped network error also names its innermost cause, e.g. `IOException
+  (SocketTimeoutException): timeout`; only the message's first line is kept, at most 200 characters.
 - **F7** — a downloaded chapter's page rows are deleted; if its download is gone later, the page list is fetched again.
 - **F11** — default user agent Chrome 156, override with `-Dsuwayomi.fork.userAgent=…`; CBZ images are STORED
   (ComicInfo.xml deflated); no MySQL-only pool properties.

@@ -1,9 +1,13 @@
 package suwayomi.tachidesk.manga.impl.download.fileProvider
 
 import eu.kanade.tachiyomi.network.HttpException
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
+import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
 import java.io.IOException
 import java.util.concurrent.CancellationException
+
+private val logger = KotlinLogging.logger {}
 
 /** Fork-only (F9): the waits before each retry of a page. Three retries, then the chapter fails as before. */
 val PAGE_RETRY_DELAYS_MS = listOf(2_000L, 4_000L, 8_000L)
@@ -29,10 +33,15 @@ fun isRetryablePageFailure(e: Throwable): Boolean =
         else -> e.cause?.let(::isRetryablePageFailure) ?: false
     }
 
-/** Runs [block], waiting [delaysMs] and retrying while it fails with a retryable error; the last error is rethrown. */
+/**
+ * Runs [block], waiting [delaysMs] and retrying while it fails with a retryable error; the last error is rethrown.
+ * [onRetry] hears about each retry before its wait: its number from 1, the wait, and the failure before it. It must not
+ * throw: its exception would replace the page's failure and end the retries.
+ */
 suspend fun <T> withPageRetries(
     delaysMs: List<Long> = PAGE_RETRY_DELAYS_MS,
     wait: suspend (Long) -> Unit = { delay(it) },
+    onRetry: (retry: Int, waitMs: Long, cause: Exception) -> Unit = { _, _, _ -> },
     block: suspend () -> T,
 ): T {
     var retries = 0
@@ -41,8 +50,54 @@ suspend fun <T> withPageRetries(
             return block()
         } catch (e: Exception) {
             if (retries >= delaysMs.size || !isRetryablePageFailure(e)) throw e
-            wait(delaysMs[retries++])
+            val waitMs = delaysMs[retries++]
+            onRetry(retries, waitMs, e)
+            wait(waitMs)
         }
+    }
+}
+
+/** [withPageRetries]' `onRetry` for page [page] (from 0) of a queued chapter: logs each retry with the chapter's source. */
+fun pageRetryReporter(
+    download: DownloadQueueItem,
+    page: Int,
+): (Int, Long, Exception) -> Unit =
+    { retry, waitMs, cause ->
+        logPageRetry(
+            sourceId = download.sourceId,
+            chapterId = download.chapterId,
+            page = page,
+            retry = retry,
+            waitMs = waitMs,
+            cause = cause,
+        )
+    }
+
+private const val MAX_LOGGED_MESSAGE = 200
+
+/**
+ * Fork-only (F9): one line per page retry, so a source's retries and their HTTP statuses can be counted from the log.
+ * [page] counts from 0 and is logged from 1, as page files and readers count. A failure that wraps others (OkHttp wraps
+ * network errors in an IOException) also names the innermost one. Only the message's first line is logged, cut short.
+ */
+fun logPageRetry(
+    sourceId: Long,
+    chapterId: Int,
+    page: Int,
+    retry: Int,
+    waitMs: Long,
+    cause: Throwable,
+) {
+    val innermost = generateSequence(cause) { it.cause }.take(MAX_CAUSES).last()
+    val kind = if (innermost === cause) "${cause::class.simpleName}" else "${cause::class.simpleName} (${innermost::class.simpleName})"
+    val message =
+        cause.message
+            ?.lineSequence()
+            ?.firstOrNull()
+            ?.take(MAX_LOGGED_MESSAGE)
+    logger.info {
+        "Page retry $retry/${PAGE_RETRY_DELAYS_MS.size} in ${waitMs / 1000} s: source=$sourceId chapter=$chapterId page=${page + 1} " +
+            "after $kind: $message"
     }
 }
 

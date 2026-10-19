@@ -48,7 +48,8 @@ private suspend fun getMangaDir(mangaId: Int): String =
         getMangaDir(mangaEntry[MangaTable.title], source.toString())
     }
 
-private fun getChapterDirName(
+// internal for the fork's ObsoleteDownloads (F16), which matches files to chapters by this name
+internal fun getChapterDirName(
     title: String,
     scanlator: String?,
 ): String =
@@ -165,7 +166,8 @@ private fun updateDownloadDir(
     return renamed
 }
 
-private val mutexByManga = ConcurrentHashMap<Int, Mutex>()
+// internal for the fork's ObsoleteDownloads (F16), which deletes files under the same lock
+internal val mutexByManga = ConcurrentHashMap<Int, Mutex>()
 
 /**
  * Renames download folders of one series' chapters, e.g. during one chapter-list sync.

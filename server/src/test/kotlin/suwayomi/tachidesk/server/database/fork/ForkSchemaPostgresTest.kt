@@ -12,7 +12,10 @@ import kotlin.test.assertTrue
 class ForkSchemaPostgresTest : PostgresTest() {
     private fun names(): List<String> =
         transaction {
-            exec("SELECT indexname FROM pg_indexes WHERE schemaname = 'suwayomi' AND indexname LIKE 'fork\\_%'") { rs ->
+            // a fork table's primary key brings its own index; only the indexes ForkSchema lists count here
+            exec(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = 'suwayomi' AND indexname LIKE 'fork\\_%' AND indexname NOT LIKE '%\\_pkey'",
+            ) { rs ->
                 buildList { while (rs.next()) add(rs.getString(1)) }
             }.orEmpty().sorted()
         }
@@ -42,6 +45,24 @@ class ForkSchemaPostgresTest : PostgresTest() {
     @Test
     fun `databaseUp creates every fork index on postgres`() {
         assertEquals(ForkSchema.indexNames.sorted(), names())
+    }
+
+    @Test
+    fun `databaseUp creates every fork table on postgres`() {
+        val tables =
+            transaction {
+                exec("SELECT tablename FROM pg_tables WHERE schemaname = 'suwayomi' AND tablename LIKE 'fork\\_%'") { rs ->
+                    buildList { while (rs.next()) add(rs.getString(1)) }
+                }.orEmpty()
+            }
+        assertEquals(listOf("fork_obsolete_download"), tables)
+    }
+
+    @Test
+    fun `existing fork tables don't wait for a series that is being updated`() {
+        whileTableIsBeingUpdated("manga") {
+            assertTimeoutPreemptively(Duration.ofSeconds(10)) { ForkSchema.apply() }
+        }
     }
 
     @Test

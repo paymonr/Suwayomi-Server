@@ -14,6 +14,18 @@ class ForkSchemaTest : ApplicationTest() {
             }.orEmpty().distinct().sorted()
         }
 
+    private fun forkTableNames(): List<String> =
+        transaction {
+            exec("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE LOWER(TABLE_NAME) LIKE 'fork\\_%' ESCAPE '\\'") { rs ->
+                buildList { while (rs.next()) add(rs.getString(1).lowercase()) }
+            }.orEmpty().sorted()
+        }
+
+    @Test
+    fun `databaseUp creates every fork table`() {
+        assertEquals(listOf("fork_obsolete_download"), forkTableNames())
+    }
+
     @Test
     fun `databaseUp creates every fork index`() {
         assertEquals(ForkSchema.indexNames.sorted(), forkIndexNames())

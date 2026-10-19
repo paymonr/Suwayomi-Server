@@ -8,6 +8,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.graphql.types.DatabaseType
+import suwayomi.tachidesk.manga.impl.fork.ObsoleteDownloads
 import suwayomi.tachidesk.server.serverConfig
 
 /**
@@ -35,9 +36,35 @@ object ForkSchema {
 
     val indexNames: List<String> get() = indexes.keys.toList()
 
+    private val tables =
+        linkedMapOf(
+            // F16: old downloads a chapter-list sync left behind, until a newer download of the same chapter replaces them
+            ObsoleteDownloads.TABLE to
+                "manga INT NOT NULL REFERENCES manga (id) ON DELETE CASCADE, chapter_number REAL NOT NULL, " +
+                "dir_name VARCHAR(1024) NOT NULL, recorded_at BIGINT NOT NULL, PRIMARY KEY (manga, dir_name)",
+        )
+
     fun apply() {
+        createTables(LOCK_TIMEOUT_MS)
         apply(indexes, LOCK_TIMEOUT_MS)
         ForkChangeTracking.apply()
+    }
+
+    /** A table that can't be created is logged; what uses it logs its own failures until the next start. */
+    private fun createTables(lockTimeoutMs: Int) {
+        val postgres = serverConfig.databaseType.value == DatabaseType.POSTGRESQL
+        tables.forEach { (name, columns) ->
+            try {
+                transaction {
+                    // Exposed retries a failed transaction (3 attempts by default); each retry would wait for the lock again
+                    maxAttempts = 1
+                    if (postgres) exec("SET LOCAL lock_timeout = $lockTimeoutMs")
+                    exec("CREATE TABLE IF NOT EXISTS $name ($columns)")
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "ForkSchema: couldn't create table $name; trying again at the next start" }
+            }
+        }
     }
 
     /** Returns the names of the indexes that couldn't be created or rebuilt. */

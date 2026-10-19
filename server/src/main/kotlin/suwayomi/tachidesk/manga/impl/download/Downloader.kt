@@ -36,6 +36,7 @@ import suwayomi.tachidesk.manga.impl.download.model.DownloadUpdateType.FINISHED
 import suwayomi.tachidesk.manga.impl.download.model.DownloadUpdateType.PAUSED
 import suwayomi.tachidesk.manga.impl.download.model.DownloadUpdateType.PROGRESS
 import suwayomi.tachidesk.manga.impl.download.model.DownloadUpdateType.STOPPED
+import suwayomi.tachidesk.manga.impl.fork.ObsoleteDownloads
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -186,6 +187,8 @@ class Downloader(
                         it[isDownloaded] = true
                     }
                 }
+                // Fork (F16): a chapter-list sync may have left an older download of this chapter behind
+                ObsoleteDownloads.afterDownload(download.mangaId, download.chapterId)
                 finishDownload(downloadLogger, download)
             } catch (e: CancellationException) {
                 downloadLogger.debug { "Downloader was stopped" }

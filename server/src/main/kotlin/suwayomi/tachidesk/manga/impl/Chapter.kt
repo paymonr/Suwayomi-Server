@@ -35,6 +35,7 @@ import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.manga.impl.download.DownloadManager
 import suwayomi.tachidesk.manga.impl.download.DownloadManager.EnqueueInput
+import suwayomi.tachidesk.manga.impl.fork.ObsoleteDownloads
 import suwayomi.tachidesk.manga.impl.track.Track
 import suwayomi.tachidesk.manga.impl.util.ChapterDownloadDirs
 import suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass
@@ -225,6 +226,11 @@ object Chapter {
         // clear any orphaned/duplicate chapters that are in the db but not in `chapterList`
         val chapterUrls = uniqueChapters.map { it.url }.toSet()
 
+        // Fork (F16): deleted chapters whose download moved to a newly inserted chapter
+        val carriedOverDownloadIds = mutableSetOf<Int>()
+        // Fork (F16): downloaded chapters this sync renamed but whose files couldn't follow
+        val unrenamedDownloads = mutableListOf<ChapterDataClass>()
+
         val chaptersIdsToDelete =
             chaptersInDb.mapNotNull { dbChapter ->
                 if (!chapterUrls.contains(dbChapter.url)) {
@@ -290,6 +296,7 @@ object Chapter {
                         // For a new (unrecognized) chapter, we have to handle the existing downloads as obsolete in case the scanlator changed because we can't assume that the pages are still the same
                         val isSameScanlator = chapter.scanlator == deletedChapter.scanlator
                         val isPreservable = isSameScanlator && downloadDirs.update(deletedChapter, chapter)
+                        if (isPreservable) carriedOverDownloadIds += deletedChapter.id
 
                         isPreservable
                     }
@@ -335,6 +342,7 @@ object Chapter {
                             if (!isDownloadPreservable) {
                                 this[ChapterTable.isDownloaded] = false
                                 this[ChapterTable.pageCount] = -1
+                                unrenamedDownloads += currentChapter
                             }
                         }
                     }.toExecutable()
@@ -345,6 +353,12 @@ object Chapter {
                 it[chaptersLastFetchedAt] = Instant.now().epochSecond
             }
         }
+
+        // Fork (F16): the files this sync stopped pointing to go once a newer download of their chapter is in place
+        ObsoleteDownloads.dropped(
+            mangaEntry[MangaTable.id].value,
+            chaptersInDb.filter { it.downloaded && it.url !in chapterUrls && it.id !in carriedOverDownloadIds } + unrenamedDownloads,
+        )
 
         if (mangaEntry[MangaTable.inLibrary]) {
             // We have to query the inserted chapters to get the up-to-date data. I.e. "last_modified_at" is not returned by the insert statement, due to being set by a DB trigger

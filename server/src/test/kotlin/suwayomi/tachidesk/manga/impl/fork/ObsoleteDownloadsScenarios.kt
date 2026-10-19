@@ -17,6 +17,7 @@ import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.server.database.fork.ForkSchema
 import suwayomi.tachidesk.test.createLibraryManga
 import java.io.File
+import java.nio.file.Files
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -270,6 +271,136 @@ internal object ObsoleteDownloadsScenarios {
         sync(m, chapter("/c/b", "Volume 1 Chapter 1", 1f, "New Group"))
 
         assertFalse(old.exists(), "the same chapter, from another group")
+    }
+
+    fun volumesWrittenWithASpaceDontReplaceEachOther() {
+        val m = series("volume spaces")
+        sync(m, chapter("/c/v2c1", "Vol. 2 Ch. 1", 1f), chapter("/c/v1c1", "Vol. 1 Ch. 1", 1f))
+        markDownloaded(m, "/c/v2c1")
+        markDownloaded(m, "/c/v1c1")
+        val volumeOne = cbz(m, "Vol. 1 Ch. 1").written()
+        cbz(m, "Vol. 2 Ch. 1").written()
+
+        sync(m, chapter("/c/v2c1", "Vol. 2 Ch. 1", 1f))
+
+        assertTrue(volumeOne.exists(), "the only copy of volume 1's chapter 1")
+    }
+
+    fun namesGivingDifferentNumbersDontReplaceEachOther() {
+        // an extension that numbers every chapter 0
+        val m = series("numbered 0")
+        sync(m, chapter("/c/2", "Chapter 2", 0f), chapter("/c/1", "Chapter 1", 0f))
+        markDownloaded(m, "/c/2")
+        markDownloaded(m, "/c/1")
+        val one = cbz(m, "Chapter 1").written()
+        cbz(m, "Chapter 2").written()
+
+        sync(m, chapter("/c/2", "Chapter 2", 0f))
+
+        assertTrue(one.exists(), "chapter 1, whatever number the source gave it")
+    }
+
+    fun aReplacementThatIsTheOldFileKeepsIt() {
+        // on a case-insensitive filesystem "group_Chapter 1.cbz" is "Group_Chapter 1.cbz"; a link stands in for that here
+        val m = series("same file")
+        sync(m, chapter("/c/1a", "Chapter 1", 1f, "Group"))
+        markDownloaded(m, "/c/1a")
+        val file = cbz(m, "Chapter 1", "Group").written()
+        sync(m, chapter("/c/1b", "Chapter 1", 1f, "group"))
+
+        Files.createSymbolicLink(cbz(m, "Chapter 1", "group").toPath(), file.toPath())
+        downloaded(m, "/c/1b")
+
+        assertTrue(file.exists(), "chapter 1 is downloaded to this file")
+    }
+
+    fun aReplacementMissingOnDiskReplacesNothing() {
+        val m = series("replacement missing")
+        sync(m, chapter("/c/1a", "Chapter 1", 1f, "Old Group"))
+        markDownloaded(m, "/c/1a")
+        val old = cbz(m, "Chapter 1", "Old Group").written()
+        sync(m, chapter("/c/1b", "Chapter 1", 1f, "New Group"))
+
+        downloaded(m, "/c/1b") // flagged, but its file isn't there
+
+        assertTrue(old.exists(), "chapter 1's only file")
+    }
+
+    fun anEmptyReplacementReplacesNothing() {
+        val m = series("replacement empty")
+        sync(m, chapter("/c/1a", "Chapter 1", 1f, "Old Group"))
+        markDownloaded(m, "/c/1a")
+        val old = cbz(m, "Chapter 1", "Old Group").written()
+        sync(m, chapter("/c/1b", "Chapter 1", 1f, "New Group"))
+
+        cbz(m, "Chapter 1", "New Group").apply {
+            parentFile.mkdirs()
+            writeBytes(ByteArray(0))
+        }
+        downloaded(m, "/c/1b")
+
+        assertTrue(old.exists(), "chapter 1's only pages")
+    }
+
+    fun aFileAListedChapterIsNamedForIsKept() {
+        val m = series("listed")
+        sync(m, chapter("/c/1a", "Chapter 1", 1f, "Old Group"))
+        markDownloaded(m, "/c/1a")
+        val old = cbz(m, "Chapter 1", "Old Group").written()
+        sync(m, chapter("/c/1b", "Chapter 1", 1f, "New Group"))
+        // the old group's chapter is listed again, not downloaded yet
+        sync(m, chapter("/c/1b", "Chapter 1", 1f, "New Group"), chapter("/c/1c", "Chapter 1", 1f, "Old Group"))
+
+        cbz(m, "Chapter 1", "New Group").written()
+        downloaded(m, "/c/1b")
+
+        assertTrue(old.exists(), "/c/1c takes this file up once it's downloaded or opened")
+    }
+
+    fun aChapterRelabelledWithAnotherNumberIsntReplacedByItsOldNumber() {
+        val m = series("renumbered")
+        sync(m, chapter("/c/2", "Chapter 2", 2f))
+        markDownloaded(m, "/c/2")
+        val old = cbz(m, "Chapter 2").written()
+        cbz(m, "Chapter 3").written() // the new name is taken, so the rename is refused
+
+        // the source now calls /c/2 chapter 3, and a new url chapter 2
+        sync(m, chapter("/c/9", "Ch. 2", 2f), chapter("/c/2", "Chapter 3", 3f))
+        cbz(m, "Ch. 2").written()
+        downloaded(m, "/c/9")
+
+        assertTrue(old.exists(), "/c/2's pages, which the new chapter 2 doesn't replace")
+    }
+
+    fun aRelabelOntoAnotherVersionsNameKeepsItsPages() {
+        val m = series("shared same number")
+        sync(m, chapter("/c/2a", "Chapter 2", 2f), chapter("/c/2b", "Ch.2", 2f))
+        markDownloaded(m, "/c/2a")
+        markDownloaded(m, "/c/2b")
+        val mine = cbz(m, "Chapter 2").written()
+        cbz(m, "Ch.2").written()
+
+        // the source labels /c/2a with /c/2b's name; the rename is refused
+        sync(m, chapter("/c/2a", "Ch.2", 2f), chapter("/c/2b", "Ch.2", 2f))
+        downloaded(m, "/c/2a") // the download finds /c/2b's file at its new name
+
+        assertTrue(mine.exists(), "the only copy of /c/2a's pages")
+    }
+
+    fun aLinkedChapterFolderIsntFollowed() {
+        val m = series("linked folder")
+        sync(m, chapter("/c/1a", "Chapter 1", 1f, "Old Group"))
+        markDownloaded(m, "/c/1a")
+        val old = folder(m, "Chapter 1", "Old Group")
+        val elsewhere = File(old.parentFile.parentFile, "F16 elsewhere ${System.nanoTime()}").withPage()
+        old.parentFile.mkdirs()
+        Files.createSymbolicLink(old.toPath(), elsewhere.toPath())
+        sync(m, chapter("/c/1b", "Chapter 1", 1f, "New Group"))
+
+        folder(m, "Chapter 1", "New Group").withPage()
+        downloaded(m, "/c/1b")
+
+        assertTrue(File(elsewhere, "001.png").exists(), "the linked folder's files aren't the chapter's to delete")
     }
 
     fun withoutItsTableSyncsAndDownloadsStillWork() {

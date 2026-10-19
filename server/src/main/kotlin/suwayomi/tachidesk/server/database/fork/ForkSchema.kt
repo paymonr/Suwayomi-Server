@@ -39,9 +39,11 @@ object ForkSchema {
     private val tables =
         linkedMapOf(
             // F16: old downloads a chapter-list sync left behind, until a newer download of the same chapter replaces them
+            // No foreign key to manga: a fork table mustn't hold up an upstream migration of it. Series ids aren't reused,
+            // so a deleted series' rows only sit there.
             ObsoleteDownloads.TABLE to
-                "manga INT NOT NULL REFERENCES manga (id) ON DELETE CASCADE, chapter_number REAL NOT NULL, " +
-                "dir_name VARCHAR(1024) NOT NULL, recorded_at BIGINT NOT NULL, PRIMARY KEY (manga, dir_name)",
+                "manga INT NOT NULL, chapter_number REAL NOT NULL, dir_name VARCHAR(1024) NOT NULL, " +
+                "chapter_name VARCHAR(512) NOT NULL, recorded_at BIGINT NOT NULL, PRIMARY KEY (manga, dir_name)",
         )
 
     fun apply() {

@@ -296,7 +296,7 @@ object Chapter {
                         // For a new (unrecognized) chapter, we have to handle the existing downloads as obsolete in case the scanlator changed because we can't assume that the pages are still the same
                         val isSameScanlator = chapter.scanlator == deletedChapter.scanlator
                         val isPreservable = isSameScanlator && downloadDirs.update(deletedChapter, chapter)
-                        if (isPreservable) carriedOverDownloadIds += deletedChapter.id
+                        if (isPreservable) carriedOverDownloadIds += deletedChapter.id // Fork (F16)
 
                         isPreservable
                     }
@@ -342,7 +342,8 @@ object Chapter {
                             if (!isDownloadPreservable) {
                                 this[ChapterTable.isDownloaded] = false
                                 this[ChapterTable.pageCount] = -1
-                                unrenamedDownloads += currentChapter
+                                // Fork (F16): under the number the source gives it now
+                                unrenamedDownloads += currentChapter.copy(chapterNumber = it.chapterNumber)
                             }
                         }
                     }.toExecutable()

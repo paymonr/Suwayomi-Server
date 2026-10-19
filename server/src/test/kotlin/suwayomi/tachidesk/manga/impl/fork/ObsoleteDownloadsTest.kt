@@ -72,6 +72,28 @@ class ObsoleteDownloadsTest : ApplicationTest() {
     @Test fun `the same volume's chapter from another group still replaces it`() =
         ObsoleteDownloadsScenarios.theSameVolumesChapterFromAnotherGroupStillReplacesIt()
 
+    @Test fun `volumes written with a space don't replace each other`() =
+        ObsoleteDownloadsScenarios.volumesWrittenWithASpaceDontReplaceEachOther()
+
+    @Test fun `names giving different numbers don't replace each other`() =
+        ObsoleteDownloadsScenarios.namesGivingDifferentNumbersDontReplaceEachOther()
+
+    @Test fun `a replacement that is the old file keeps it`() = ObsoleteDownloadsScenarios.aReplacementThatIsTheOldFileKeepsIt()
+
+    @Test fun `a replacement missing on disk replaces nothing`() = ObsoleteDownloadsScenarios.aReplacementMissingOnDiskReplacesNothing()
+
+    @Test fun `an empty replacement replaces nothing`() = ObsoleteDownloadsScenarios.anEmptyReplacementReplacesNothing()
+
+    @Test fun `a file a listed chapter is named for is kept`() = ObsoleteDownloadsScenarios.aFileAListedChapterIsNamedForIsKept()
+
+    @Test fun `a chapter relabelled with another number isn't replaced by its old number`() =
+        ObsoleteDownloadsScenarios.aChapterRelabelledWithAnotherNumberIsntReplacedByItsOldNumber()
+
+    @Test fun `a relabel onto another version's name keeps its pages`() =
+        ObsoleteDownloadsScenarios.aRelabelOntoAnotherVersionsNameKeepsItsPages()
+
+    @Test fun `a linked chapter folder isn't followed`() = ObsoleteDownloadsScenarios.aLinkedChapterFolderIsntFollowed()
+
     @Test fun `without its table, syncs and downloads still work`() = ObsoleteDownloadsScenarios.withoutItsTableSyncsAndDownloadsStillWork()
 
     @Test

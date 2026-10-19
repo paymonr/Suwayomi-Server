@@ -1,5 +1,6 @@
 package suwayomi.tachidesk.manga.impl.fork
 
+import eu.kanade.tachiyomi.util.chapter.ChapterRecognition
 import eu.kanade.tachiyomi.util.lang.withIOContext
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
@@ -19,7 +20,10 @@ import suwayomi.tachidesk.manga.impl.util.getMangaDownloadDir
 import suwayomi.tachidesk.manga.impl.util.mutexByManga
 import suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass
 import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.manga.model.table.MangaTable
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
 import java.time.Instant
 
 /**
@@ -31,11 +35,18 @@ import java.time.Instant
  * The sync hands those chapters to [dropped], which remembers each file still on disk. Once a chapter with the same number
  * is downloaded, at that sync or later ([afterDownload]), the old file is deleted.
  *
- * Kept: a file a downloaded chapter points to; a file whose replacement isn't on disk, or is shared with another downloaded
- * chapter (a relabel onto another chapter's name: the old file holds the only copy of its pages); a chapter from another
- * volume, season or part than its would-be replacement (numbering that restarts gives both the same number); a chapter
- * with no recognised number, which nothing can be matched to; and a chapter nothing replaces. It goes by chapter numbers
- * and names, never by source, so extension changes don't affect it.
+ * Kept:
+ * - a file a listed chapter is named for: a downloaded one points to it, any other takes it up once downloaded or opened;
+ * - when the replacement's pages aren't on disk, it shares its file name with another listed chapter (a relabel onto
+ *   another chapter's name: the old file holds the only copy of its pages), or it is the old file itself (a case-only
+ *   rename on a case-insensitive filesystem);
+ * - when the names show different chapters: different volume, season or part numbers (numbering that restarts gives both
+ *   the same number), or different chapter numbers read from the names alone (an extension that numbers them all 0);
+ * - a chapter with no recognised number, which nothing can be matched to, and a chapter nothing replaces;
+ * - a linked folder, and a folder with folders inside: neither is a chapter's.
+ *
+ * It goes by chapter numbers and names, never by source, so extension changes don't affect it. Only files a sync leaves
+ * behind from now on are tracked; older leftovers stay where they are.
  */
 object ObsoleteDownloads {
     private val logger = KotlinLogging.logger {}
@@ -49,16 +60,30 @@ object ObsoleteDownloads {
 
         /** the chapter's download in its series folder: a folder of that name, or that name plus ".cbz" */
         val dirName = varchar("dir_name", 1024)
+        val chapterName = varchar("chapter_name", 512)
         val recordedAt = long("recorded_at")
 
         override val primaryKey = PrimaryKey(manga, dirName)
     }
 
-    // ChapterRecognition drops these from a name before reading its number, so chapter 1 of volumes 1 and 2 are both 1
-    private val restartMarker = Regex("""(?<![a-z0-9])(vol|volume|season|s|part)[^a-z0-9]?([0-9]+)""")
+    private class Old(
+        val number: Float,
+        val dirName: String,
+        val name: String,
+    )
 
-    private fun restartMarkers(dirName: String): Map<String, String> =
-        restartMarker.findAll(dirName.lowercase()).associate { match ->
+    private class Listed(
+        val number: Float,
+        val dirName: String,
+        val name: String,
+        val downloaded: Boolean,
+    )
+
+    // ChapterRecognition drops these from a name before reading its number, so chapter 1 of volumes 1 and 2 are both 1
+    private val restartMarker = Regex("""(?<![a-z0-9])(vol|volume|season|s|part)[^a-z0-9]{0,3}([0-9]+)""")
+
+    private fun restartMarkers(name: String): Map<String, String> =
+        restartMarker.findAll(name.lowercase()).associate { match ->
             val kind =
                 when (match.groupValues[1]) {
                     "vol", "volume" -> "volume"
@@ -68,14 +93,18 @@ object ObsoleteDownloads {
             kind to match.groupValues[2].trimStart('0')
         }
 
-    /** False when the names carry different volume, season or part numbers. */
-    private fun canReplace(
-        newDirName: String,
-        oldDirName: String,
+    /** False when the names show different chapters, whatever numbers the source gave them. */
+    private fun isSameChapter(
+        mangaTitle: String,
+        newName: String,
+        oldName: String,
     ): Boolean {
-        val new = restartMarkers(newDirName)
-        val old = restartMarkers(oldDirName)
-        return new.keys.intersect(old.keys).all { new[it] == old[it] }
+        val new = restartMarkers(newName)
+        val old = restartMarkers(oldName)
+        if (new.keys.intersect(old.keys).any { new[it] != old[it] }) return false
+        val newNumber = ChapterRecognition.parseChapterNumber(mangaTitle, newName, -1.0)
+        val oldNumber = ChapterRecognition.parseChapterNumber(mangaTitle, oldName, -1.0)
+        return newNumber < 0 || oldNumber < 0 || newNumber == oldNumber
     }
 
     private fun Float.asChapterNumber(): String = if (this % 1f == 0f) toInt().toString() else toString()
@@ -91,26 +120,31 @@ object ObsoleteDownloads {
             val onDisk =
                 withIOContext {
                     chapters
-                        .map { it.chapterNumber to getChapterDirName(it.name, it.scanlator) }
-                        .distinctBy { (_, dirName) -> dirName }
-                        .filter { (_, dirName) -> isOnDisk(mangaDir, dirName) }
+                        .map { Old(it.chapterNumber, getChapterDirName(it.name, it.scanlator), it.name) }
+                        .distinctBy { it.dirName }
+                        .filter { isOnDisk(mangaDir, it.dirName) }
                 }
-            val (numbered, unnumbered) = onDisk.partition { (number, _) -> number >= 0f }
-            unnumbered.forEach { (_, dirName) ->
-                logger.info { "Left \"$dirName\" in \"$mangaDir\": its chapter has no recognised number, so no download can replace it" }
+            val (numbered, unnumbered) = onDisk.partition { it.number >= 0f }
+            unnumbered.forEach {
+                logger.info {
+                    "Left \"${it.dirName}\" in \"$mangaDir\": its chapter has no recognised number, so no download can replace it"
+                }
             }
             if (numbered.isEmpty()) return@guarded
             transaction {
-                ObsoleteDownloadTable.batchUpsert(numbered) { (number, dirName) ->
+                ObsoleteDownloadTable.batchUpsert(numbered) {
                     this[ObsoleteDownloadTable.manga] = mangaId
-                    this[ObsoleteDownloadTable.chapterNumber] = number
-                    this[ObsoleteDownloadTable.dirName] = dirName
+                    this[ObsoleteDownloadTable.chapterNumber] = it.number
+                    this[ObsoleteDownloadTable.dirName] = it.dirName
+                    this[ObsoleteDownloadTable.chapterName] = it.name
                     this[ObsoleteDownloadTable.recordedAt] = Instant.now().epochSecond
                 }
             }
-            deleteReplaced(mangaId, numbered.map { (number, _) -> number }.toSet())
-            withIOContext { numbered.filter { (_, dirName) -> isOnDisk(mangaDir, dirName) } }.forEach { (number, dirName) ->
-                logger.info { "Keeping \"$dirName\" in \"$mangaDir\" until chapter ${number.asChapterNumber()} is downloaded again" }
+            deleteReplaced(mangaId, numbered.map { it.number }.toSet())
+            withIOContext { numbered.filter { isOnDisk(mangaDir, it.dirName) } }.forEach {
+                logger.info {
+                    "Keeping \"${it.dirName}\" in \"$mangaDir\" until chapter ${it.number.asChapterNumber()} is downloaded again"
+                }
             }
         }
     }
@@ -144,43 +178,72 @@ object ObsoleteDownloads {
                     ObsoleteDownloadTable
                         .selectAll()
                         .where { (ObsoleteDownloadTable.manga eq mangaId) and (ObsoleteDownloadTable.chapterNumber inList numbers) }
-                        .map { it[ObsoleteDownloadTable.chapterNumber] to it[ObsoleteDownloadTable.dirName] }
+                        .map {
+                            Old(
+                                it[ObsoleteDownloadTable.chapterNumber],
+                                it[ObsoleteDownloadTable.dirName],
+                                it[ObsoleteDownloadTable.chapterName],
+                            )
+                        }
                 }
             if (waiting.isEmpty()) return
 
             val mangaDir = getMangaDownloadDir(mangaId)
-            val downloaded =
+            val mangaTitle =
+                transaction { MangaTable.select(MangaTable.title).where { MangaTable.id eq mangaId }.single()[MangaTable.title] }
+            val listed =
                 transaction {
                     ChapterTable
-                        .select(ChapterTable.chapter_number, ChapterTable.name, ChapterTable.scanlator)
-                        .where { (ChapterTable.manga eq mangaId) and (ChapterTable.isDownloaded eq true) }
-                        .map { it[ChapterTable.chapter_number] to getChapterDirName(it[ChapterTable.name], it[ChapterTable.scanlator]) }
+                        .select(ChapterTable.chapter_number, ChapterTable.name, ChapterTable.scanlator, ChapterTable.isDownloaded)
+                        .where { ChapterTable.manga eq mangaId }
+                        .map {
+                            Listed(
+                                number = it[ChapterTable.chapter_number],
+                                dirName = getChapterDirName(it[ChapterTable.name], it[ChapterTable.scanlator]),
+                                name = it[ChapterTable.name],
+                                downloaded = it[ChapterTable.isDownloaded],
+                            )
+                        }
                 }
-            val chaptersByFile = downloaded.groupingBy { (_, dirName) -> dirName }.eachCount()
+            val chaptersByFile = listed.groupingBy { it.dirName }.eachCount()
+            val downloadedFiles = listed.filter { it.downloaded }.map { it.dirName }.toSet()
 
             withIOContext {
-                // a replacement counts once its file is on disk and it's the only downloaded chapter pointing to that file
+                // a replacement is downloaded, has its pages on disk, and is the only listed chapter with that file name
                 val replacements =
-                    downloaded.filter { (number, dirName) ->
-                        number in numbers && chaptersByFile[dirName] == 1 &&
-                            isOnDisk(mangaDir, dirName)
+                    listed.filter {
+                        it.downloaded && it.number in numbers && chaptersByFile[it.dirName] == 1 &&
+                            hasPages(mangaDir, it.dirName)
                     }
 
-                waiting.forEach { (number, dirName) ->
-                    if (dirName in chaptersByFile) {
+                waiting.forEach { old ->
+                    if (old.dirName in downloadedFiles) {
                         // a downloaded chapter points to it again
-                        forget(mangaId, dirName)
+                        forget(mangaId, old.dirName)
+                        return@forEach
+                    }
+                    // a listed chapter with this name takes the file up once it's downloaded or opened
+                    if (old.dirName in chaptersByFile) return@forEach
+
+                    val candidates = replacements.filter { it.number == old.number && isSameChapter(mangaTitle, it.name, old.name) }
+                    if (candidates.isEmpty()) return@forEach
+                    val sameFile = candidates.map { isSameFile(mangaDir, it.dirName, old.dirName) }
+                    if (true in sameFile) {
+                        // the replacement is this very file under another name
+                        forget(mangaId, old.dirName)
+                        return@forEach
+                    }
+                    // couldn't tell; try again on the next download
+                    if (null in sameFile) return@forEach
+
+                    if (delete(mangaDir, old.dirName)) {
+                        forget(mangaId, old.dirName)
+                        logger.info {
+                            "Deleted \"${old.dirName}\" in \"$mangaDir\": replaced by the download \"${candidates.first().dirName}\""
+                        }
                     } else {
-                        val replacement =
-                            replacements.firstOrNull { (newNumber, newDirName) -> newNumber == number && canReplace(newDirName, dirName) }
-                                ?: return@forEach
-                        if (delete(mangaDir, dirName)) {
-                            forget(mangaId, dirName)
-                            logger.info { "Deleted \"$dirName\" in \"$mangaDir\": replaced by the download \"${replacement.second}\"" }
-                        } else {
-                            logger.warn {
-                                "Couldn't delete \"$dirName\" in \"$mangaDir\"; trying again when chapter ${number.asChapterNumber()} next downloads"
-                            }
+                        logger.warn {
+                            "Couldn't delete \"${old.dirName}\" in \"$mangaDir\"; trying again when chapter ${old.number.asChapterNumber()} next downloads"
                         }
                     }
                 }
@@ -200,21 +263,66 @@ object ObsoleteDownloads {
     /** A blank name would point at the series folder itself. */
     private fun isChapterName(dirName: String): Boolean = dirName.isNotBlank() && dirName != "." && dirName != ".." && '/' !in dirName
 
+    private fun cbz(
+        mangaDir: String,
+        dirName: String,
+    ) = File(mangaDir, "$dirName.cbz")
+
+    private fun folder(
+        mangaDir: String,
+        dirName: String,
+    ) = File(mangaDir, dirName)
+
     private fun isOnDisk(
         mangaDir: String,
         dirName: String,
-    ): Boolean = isChapterName(dirName) && (File(mangaDir, "$dirName.cbz").isFile || File(mangaDir, dirName).isDirectory)
+    ): Boolean = isChapterName(dirName) && (cbz(mangaDir, dirName).isFile || folder(mangaDir, dirName).isDirectory)
+
+    /** An empty cbz or folder doesn't replace anything. */
+    private fun hasPages(
+        mangaDir: String,
+        dirName: String,
+    ): Boolean =
+        isChapterName(dirName) &&
+            (
+                cbz(mangaDir, dirName).let { it.isFile && it.length() > 0 } ||
+                    folder(mangaDir, dirName).listFiles()?.any { it.isFile } == true
+            )
+
+    /** Null when it can't be told. */
+    private fun isSameFile(
+        mangaDir: String,
+        dirName: String,
+        otherDirName: String,
+    ): Boolean? {
+        fun existing(name: String) = cbz(mangaDir, name).takeIf { it.isFile } ?: folder(mangaDir, name).takeIf { it.isDirectory }
+        val file = existing(dirName) ?: return false
+        val other = existing(otherDirName) ?: return false
+        return try {
+            Files.isSameFile(file.toPath(), other.toPath())
+        } catch (e: IOException) {
+            null
+        }
+    }
 
     private fun delete(
         mangaDir: String,
         dirName: String,
     ): Boolean {
         if (!isChapterName(dirName)) return false
-        val cbz = File(mangaDir, "$dirName.cbz")
-        val folder = File(mangaDir, dirName)
-        val cbzGone = !cbz.isFile || cbz.delete()
-        // a chapter folder holds only its pages; one with folders inside isn't a chapter's
-        val folderGone = !folder.isDirectory || (folder.listFiles()?.none { it.isDirectory } == true && folder.deleteRecursively())
+        val cbz = cbz(mangaDir, dirName)
+        val folder = folder(mangaDir, dirName)
+        val cbzGone = !cbz.exists() || cbz.delete()
+        val folderGone =
+            when {
+                !folder.exists() -> true
+
+                // a link points to someone else's files
+                Files.isSymbolicLink(folder.toPath()) -> false
+
+                // a chapter folder holds only its pages; one with folders inside isn't a chapter's
+                else -> folder.listFiles()?.all { it.isFile } == true && folder.deleteRecursively()
+            }
         return cbzGone && folderGone
     }
 

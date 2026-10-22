@@ -248,8 +248,9 @@ object Chapter {
         suspendTransaction {
             // we got some clean up due
             if (chaptersIdsToDelete.isNotEmpty()) {
-                // Fork: by chapter id. A bare List<Int> picks dequeue(mangaIds), which leaves these queued and dequeues
-                // series whose ids happen to match. Upstream fixed this in #623 (User Accounts), after v2.4.2366.
+                // Fork: by chapter id. A bare List<Int> picked dequeue(mangaIds) (removed), which left these queued and
+                // dequeued series whose ids happened to match. Upstream fixed this in #623 (User Accounts), after
+                // v2.4.2366; when merging #623, take its dequeue(chaptersIdsToDelete) here (it removes EnqueueInput).
                 DownloadManager.dequeue(DownloadManager.EnqueueInput(chaptersIdsToDelete))
                 PageTable.deleteWhere { chapter inList chaptersIdsToDelete }
                 ChapterTable.deleteWhere { id inList chaptersIdsToDelete }

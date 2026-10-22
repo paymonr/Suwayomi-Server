@@ -25,6 +25,7 @@ import suwayomi.tachidesk.test.createLibraryManga
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class ChapterListSyncPostgresTest : PostgresTest() {
@@ -147,6 +148,7 @@ class ChapterListSyncPostgresTest : PostgresTest() {
         val mangaId = createLibraryManga("dequeue dropped ${System.nanoTime()}")
         sync(mangaId, chapters("3", "2", "1"))
         val dropped = chapterId(mangaId, "/c/2")
+        assertNotEquals(mangaId, dropped, "a dequeue by series id must not be able to pass this test")
         try {
             DownloadManager.enqueue(DownloadManager.EnqueueInput(listOf(dropped)))
             assertTrue(dropped in queuedChapterIds())
@@ -164,18 +166,17 @@ class ChapterListSyncPostgresTest : PostgresTest() {
         val mangaId = createLibraryManga("dequeue other ${System.nanoTime()}")
         sync(mangaId, chapters("3", "2", "1"))
         val dropped = chapterId(mangaId, "/c/2")
-        // another series whose id is the dropped chapter's id
+        // another series whose id is the dropped chapter's id (series ids stay behind chapter ids in this database)
         transaction {
-            if (MangaTable.selectAll().where { MangaTable.id eq dropped }.empty()) {
-                MangaTable.insert {
-                    it[id] = EntityID(dropped, MangaTable)
-                    it[title] = "dequeue other $dropped"
-                    it[url] = "dequeue other $dropped"
-                    it[sourceReference] = 1
-                    it[inLibrary] = true
-                }
-                exec("SELECT setval(pg_get_serial_sequence('manga', 'id'), (SELECT max(id) FROM manga))")
+            assertTrue(MangaTable.selectAll().where { MangaTable.id eq dropped }.empty(), "series $dropped already exists")
+            MangaTable.insert {
+                it[id] = EntityID(dropped, MangaTable)
+                it[title] = "dequeue other $dropped"
+                it[url] = "dequeue other $dropped"
+                it[sourceReference] = 1
+                it[inLibrary] = true
             }
+            exec("SELECT setval(pg_get_serial_sequence('manga', 'id'), (SELECT max(id) FROM manga))")
         }
         sync(dropped, chapters("9"))
         val otherChapter = chapterId(dropped, "/c/9")

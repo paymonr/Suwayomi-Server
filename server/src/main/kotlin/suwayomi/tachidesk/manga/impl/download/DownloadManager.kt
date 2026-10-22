@@ -468,13 +468,6 @@ object DownloadManager {
         dequeue(downloadQueue.filter { it.mangaId == mangaId && it.chapterIndex == chapterIndex }.toSet())
     }
 
-    fun dequeue(
-        mangaIds: List<Int>,
-        chaptersToIgnore: List<Int> = emptyList(),
-    ) {
-        dequeue(downloadQueue.filter { it.mangaId in mangaIds && it.chapterId !in chaptersToIgnore }.toSet())
-    }
-
     private fun dequeue(chapterDownloads: Set<DownloadQueueItem>) {
         logger.debug { "dequeue ${chapterDownloads.size} chapters [${chapterDownloads.joinToString(separator = ", ") { "$it" }}]" }
 

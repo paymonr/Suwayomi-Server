@@ -3,13 +3,16 @@ package suwayomi.tachidesk.manga.impl
 import eu.kanade.tachiyomi.source.model.SChapter
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.dao.id.EntityID
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import suwayomi.tachidesk.manga.impl.download.DownloadManager
 import suwayomi.tachidesk.manga.impl.util.getChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.getChapterDownloadPath
 import suwayomi.tachidesk.manga.impl.util.source.GetSource.registerSource
@@ -22,6 +25,7 @@ import suwayomi.tachidesk.test.createLibraryManga
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class ChapterListSyncPostgresTest : PostgresTest() {
@@ -123,6 +127,69 @@ class ChapterListSyncPostgresTest : PostgresTest() {
         assertEquals(listOf(Row("2 (fixed)", downloaded = true, pageCount = 5)), rowsByUrl(mangaId).getValue("/c/2"))
         assertFalse(oldFolder.exists(), "old folder must be gone")
         assertTrue(File(newFolder, "001.png").isFile, "page must be in the renamed folder")
+    }
+
+    private fun chapterId(
+        mangaId: Int,
+        url: String,
+    ): Int =
+        transaction {
+            ChapterTable
+                .selectAll()
+                .where { (ChapterTable.manga eq mangaId) and (ChapterTable.url eq url) }
+                .first()[ChapterTable.id]
+                .value
+        }
+
+    private fun queuedChapterIds() = DownloadManager.getStatus().queue.map { it.chapterId }
+
+    @Test
+    fun `a chapter the source no longer lists leaves the download queue`() {
+        val mangaId = createLibraryManga("dequeue dropped ${System.nanoTime()}")
+        sync(mangaId, chapters("3", "2", "1"))
+        val dropped = chapterId(mangaId, "/c/2")
+        assertNotEquals(mangaId, dropped, "a dequeue by series id must not be able to pass this test")
+        try {
+            DownloadManager.enqueue(DownloadManager.EnqueueInput(listOf(dropped)))
+            assertTrue(dropped in queuedChapterIds())
+
+            sync(mangaId, chapters("3", "1"))
+
+            assertFalse(dropped in queuedChapterIds(), "a deleted chapter must not stay queued")
+        } finally {
+            runBlocking { DownloadManager.clear() }
+        }
+    }
+
+    @Test
+    fun `dropping a chapter leaves another series' downloads queued`() {
+        val mangaId = createLibraryManga("dequeue other ${System.nanoTime()}")
+        sync(mangaId, chapters("3", "2", "1"))
+        val dropped = chapterId(mangaId, "/c/2")
+        // another series whose id is the dropped chapter's id (series ids stay behind chapter ids in this database)
+        transaction {
+            assertTrue(MangaTable.selectAll().where { MangaTable.id eq dropped }.empty(), "series $dropped already exists")
+            MangaTable.insert {
+                it[id] = EntityID(dropped, MangaTable)
+                it[title] = "dequeue other $dropped"
+                it[url] = "dequeue other $dropped"
+                it[sourceReference] = 1
+                it[inLibrary] = true
+            }
+            exec("SELECT setval(pg_get_serial_sequence('manga', 'id'), (SELECT max(id) FROM manga))")
+        }
+        sync(dropped, chapters("9"))
+        val otherChapter = chapterId(dropped, "/c/9")
+        try {
+            DownloadManager.enqueue(DownloadManager.EnqueueInput(listOf(otherChapter)))
+            assertTrue(otherChapter in queuedChapterIds())
+
+            sync(mangaId, chapters("3", "1"))
+
+            assertTrue(otherChapter in queuedChapterIds(), "another series' download must stay queued")
+        } finally {
+            runBlocking { DownloadManager.clear() }
+        }
     }
 
     @Test

@@ -46,6 +46,7 @@ import suwayomi.tachidesk.graphql.queries.ChapterQuery
 import suwayomi.tachidesk.graphql.queries.DownloadQuery
 import suwayomi.tachidesk.graphql.queries.ExtensionQuery
 import suwayomi.tachidesk.graphql.queries.ExtensionStoreQuery
+import suwayomi.tachidesk.graphql.queries.ForkDownloadSpeedQuery
 import suwayomi.tachidesk.graphql.queries.InfoQuery
 import suwayomi.tachidesk.graphql.queries.KoreaderSyncQuery
 import suwayomi.tachidesk.graphql.queries.MangaQuery
@@ -109,6 +110,7 @@ object GraphQLSchemaProvider {
                         TopLevelObject(DownloadQuery()),
                         TopLevelObject(ExtensionQuery()),
                         TopLevelObject(ExtensionStoreQuery()),
+                        TopLevelObject(ForkDownloadSpeedQuery()),
                         TopLevelObject(InfoQuery()),
                         TopLevelObject(KoreaderSyncQuery()),
                         TopLevelObject(MangaQuery()),

@@ -8,6 +8,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import suwayomi.tachidesk.graphql.types.DatabaseType
+import suwayomi.tachidesk.manga.impl.fork.ChapterDownloadStats
 import suwayomi.tachidesk.manga.impl.fork.ObsoleteDownloads
 import suwayomi.tachidesk.server.serverConfig
 
@@ -32,6 +33,10 @@ object ForkSchema {
             "fork_chapter_manga_source_order" to "chapter (manga, source_order)",
             "fork_chapter_manga_fetched_at" to "chapter (manga, fetched_at DESC, source_order DESC)",
             "fork_chapter_manga_date_upload" to "chapter (manga, date_upload DESC, source_order DESC)",
+            // download speeds per source over a time window
+            ChapterDownloadStats.SOURCE_STARTED_INDEX to "${ChapterDownloadStats.TABLE} (source, started_at)",
+            // ... and over all sources (downloadSpeedBySource)
+            ChapterDownloadStats.STARTED_INDEX to "${ChapterDownloadStats.TABLE} (started_at)",
         )
 
     val indexNames: List<String> get() = indexes.keys.toList()
@@ -44,6 +49,8 @@ object ForkSchema {
             ObsoleteDownloads.TABLE to
                 "manga INT NOT NULL, chapter_number REAL NOT NULL, dir_name VARCHAR(1024) NOT NULL, " +
                 "chapter_name VARCHAR(512) NOT NULL, recorded_at BIGINT NOT NULL, PRIMARY KEY (manga, dir_name)",
+            // Download speeds: one row per chapter download attempt that finished or failed
+            ChapterDownloadStats.TABLE to ChapterDownloadStats.COLUMNS,
         )
 
     fun apply() {

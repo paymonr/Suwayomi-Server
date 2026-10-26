@@ -55,7 +55,7 @@ class ForkSchemaPostgresTest : PostgresTest() {
                     buildList { while (rs.next()) add(rs.getString(1)) }
                 }.orEmpty()
             }
-        assertEquals(listOf("fork_obsolete_download"), tables)
+        assertEquals(listOf("fork_chapter_download", "fork_obsolete_download"), tables.sorted())
     }
 
     @Test

@@ -23,7 +23,7 @@ class ForkSchemaTest : ApplicationTest() {
 
     @Test
     fun `databaseUp creates every fork table`() {
-        assertEquals(listOf("fork_obsolete_download"), forkTableNames())
+        assertEquals(listOf("fork_chapter_download", "fork_obsolete_download"), forkTableNames())
     }
 
     @Test

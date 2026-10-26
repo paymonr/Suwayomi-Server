@@ -100,14 +100,21 @@ object ChapterDownloadSpeeds {
         return values.sorted()[rank - 1]
     }
 
-    /** Each chapter's seconds per page; chapters without pages are left out. */
+    /**
+     * Each chapter's seconds per page this attempt downloaded; an attempt that downloaded none (its pages were already on
+     * disk) is left out.
+     */
     private fun secondsPerPage(ok: List<ChapterDownloadStats.Attempt>): List<Double> =
-        ok.filter { it.pages > 0 }.map { it.totalMs / 1000.0 / it.pages }
+        ok.filter { it.pagesFetched > 0 }.map { it.totalMs / 1000.0 / it.pagesFetched }
 
-    /** Megabytes (10^6 bytes) per second over all [ok] attempts together; null without any time. */
+    /**
+     * Megabytes (10^6 bytes) per second over the [ok] attempts that downloaded every page themselves (the file's size is
+     * the whole chapter's); null without any time.
+     */
     private fun megabytesPerSecond(ok: List<ChapterDownloadStats.Attempt>): Double? {
-        val ms = ok.sumOf { it.totalMs.toLong() }
-        return if (ms <= 0) null else ok.sumOf { it.bytes } / 1_000_000.0 / (ms / 1000.0)
+        val whole = ok.filter { it.pages > 0 && it.pagesFetched == it.pages }
+        val ms = whole.sumOf { it.totalMs.toLong() }
+        return if (ms <= 0) null else whole.sumOf { it.bytes } / 1_000_000.0 / (ms / 1000.0)
     }
 
     private fun topFailures(failed: List<ChapterDownloadStats.Attempt>): List<FailureCount> =

@@ -211,14 +211,13 @@ class Downloader(
                 notify(false, PAUSED, download)
             } catch (e: EmptyChapterException) {
                 downloadLogger.warn(e) { "failed due to" }
-                timer.failed(e)
                 download.failure = DownloadFailure.of(e)
                 download.tries = MAX_RETRIES
                 download.state = Error
                 notify(false, ERROR, download)
+                timer.failed(e)
             } catch (e: Exception) {
                 downloadLogger.warn(e) { "failed due to" }
-                timer.failed(e)
                 download.failure = DownloadFailure.of(e)
                 download.tries++
                 download.state = Queued
@@ -226,6 +225,7 @@ class Downloader(
                     download.state = Error
                     notify(false, ERROR, download)
                 }
+                timer.failed(e)
             }
         }
     }

@@ -18,7 +18,21 @@ class ChapterDownloadSpeedsTest {
         bytes: Long,
         listMs: Int = 1_000,
         pageRetries: Int = 0,
-    ) = ChapterDownloadStats.Attempt(sourceId, 1, 1, 1, startedAt, listMs, totalMs, pages, bytes, pageRetries, ChapterDownloadStats.OK)
+        pagesFetched: Int = pages,
+    ) = ChapterDownloadStats.Attempt(
+        sourceId,
+        1,
+        1,
+        1,
+        startedAt,
+        listMs,
+        totalMs,
+        pages,
+        bytes,
+        pageRetries,
+        ChapterDownloadStats.OK,
+        pagesFetched,
+    )
 
     private fun failed(
         outcome: String,
@@ -95,6 +109,32 @@ class ChapterDownloadSpeedsTest {
     fun `a chapter with no pages or no time can't make a speed infinite`() {
         val speed = ChapterDownloadSpeeds.bySource(listOf(ok(pages = 0, totalMs = 0, bytes = 0))).single()
 
+        assertNull(speed.secondsPerPageMedian)
+        assertNull(speed.megabytesPerSecond)
+    }
+
+    @Test
+    fun `pages an attempt didn't fetch don't count towards its speed`() {
+        val speed =
+            ChapterDownloadSpeeds
+                .bySource(
+                    listOf(
+                        // an earlier attempt failed at 15 of 20 pages; this one fetched the last 5
+                        ok(pages = 20, pagesFetched = 5, totalMs = 10_000, bytes = 4_000_000),
+                        ok(pages = 10, totalMs = 10_000, bytes = 1_000_000),
+                    ),
+                ).single()
+
+        assertEquals(1.5, speed.secondsPerPageMedian) // 2.0 and 1.0 s per fetched page
+        assertEquals(0.1, speed.megabytesPerSecond!!, 1e-9) // only the chapter fetched whole: 1 MB in 10 s
+        assertEquals(30, speed.pages)
+    }
+
+    @Test
+    fun `an attempt that fetched nothing (already on disk) has no speed`() {
+        val speed = ChapterDownloadSpeeds.bySource(listOf(ok(pages = 10, pagesFetched = 0, totalMs = 5, bytes = 1_000_000))).single()
+
+        assertEquals(1, speed.chapters)
         assertNull(speed.secondsPerPageMedian)
         assertNull(speed.megabytesPerSecond)
     }

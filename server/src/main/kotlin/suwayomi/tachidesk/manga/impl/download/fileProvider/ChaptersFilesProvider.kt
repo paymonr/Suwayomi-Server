@@ -13,6 +13,7 @@ import org.jetbrains.exposed.v1.jdbc.update
 import suwayomi.tachidesk.manga.impl.Page
 import suwayomi.tachidesk.manga.impl.chapter.getChapterDownloadReady
 import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
+import suwayomi.tachidesk.manga.impl.fork.ChapterDownloadStats
 import suwayomi.tachidesk.manga.impl.util.KoreaderHelper
 import suwayomi.tachidesk.manga.impl.util.createComicInfoFile
 import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
@@ -150,6 +151,7 @@ abstract class ChaptersFilesProvider<Type : FileType>(
                         Page.getPageName(pageNum, pageCount),
                     ) { }
                 }
+                ChapterDownloadStats.countPageFetched(download.chapterId) // Fork (download speeds)
             },
             onPageDone = { finishedPages ->
                 download.progress = finishedPages.toFloat() / pageCount

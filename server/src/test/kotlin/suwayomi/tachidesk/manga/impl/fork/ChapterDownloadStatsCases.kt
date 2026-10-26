@@ -20,6 +20,7 @@ internal object ChapterDownloadStatsCases {
         bytes = 2_000_000,
         pageRetries = 1,
         outcome = outcome,
+        pagesFetched = 15,
     )
 
     /** The window is [since, until): an attempt started at until is left out. */

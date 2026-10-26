@@ -15,9 +15,11 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import suwayomi.tachidesk.manga.impl.Page
 import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
 import suwayomi.tachidesk.manga.impl.download.model.DownloadState
 import suwayomi.tachidesk.manga.impl.fork.ChapterDownloadStats
+import suwayomi.tachidesk.manga.impl.util.getChapterCachePath
 import suwayomi.tachidesk.manga.impl.util.getChapterCbzPath
 import suwayomi.tachidesk.manga.impl.util.source.GetSource.registerSource
 import suwayomi.tachidesk.manga.impl.util.source.GetSource.unregisterSource
@@ -94,11 +96,26 @@ class DownloadAttemptRecordTest : ApplicationTest() {
             assertEquals(c.mangaId, row.mangaId)
             assertEquals(c.chapterId, row.chapterId)
             assertEquals(3, row.pages)
+            assertEquals(3, row.pagesFetched)
             assertEquals(File(runBlocking { getChapterCbzPath(c.mangaId, c.chapterId) }).length(), row.bytes)
             assertTrue(row.bytes > 0)
             assertTrue(row.startedAt in before..after, "started at ${row.startedAt}, test ran $before..$after")
             assertTrue(row.listMs in 0..row.totalMs, "page list ${row.listMs} ms of ${row.totalMs} ms")
             assertEquals(0, row.pageRetries)
+        }
+
+    /** An earlier failed or stopped attempt, or the reader, leaves pages in the cache; they cost this attempt nothing. */
+    @Test
+    fun `pages already in the cache aren't counted as fetched`() =
+        withSource(pageCount = 3) { source, c ->
+            val cacheDir = File(runBlocking { getChapterCachePath(c.mangaId, c.chapterId) }).apply { mkdirs() }
+            File(cacheDir, Page.getPageName(1, 3) + ".png").writeBytes(FakePageSource.pageBytes(1))
+
+            download(source, c, 3)
+
+            val row = rows(source.id).single()
+            assertEquals(3, row.pages)
+            assertEquals(2, row.pagesFetched)
         }
 
     @Test

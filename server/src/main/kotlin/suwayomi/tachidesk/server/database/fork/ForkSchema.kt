@@ -35,6 +35,8 @@ object ForkSchema {
             "fork_chapter_manga_date_upload" to "chapter (manga, date_upload DESC, source_order DESC)",
             // download speeds per source over a time window
             ChapterDownloadStats.SOURCE_STARTED_INDEX to "${ChapterDownloadStats.TABLE} (source, started_at)",
+            // ... and over all sources (downloadSpeedBySource)
+            ChapterDownloadStats.STARTED_INDEX to "${ChapterDownloadStats.TABLE} (started_at)",
         )
 
     val indexNames: List<String> get() = indexes.keys.toList()

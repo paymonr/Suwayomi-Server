@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.jetbrains.exposed.v1.core.eq
@@ -163,10 +165,12 @@ class DownloadAttemptRecordTest : ApplicationTest() {
             try {
                 downloader.start()
                 runBlocking {
-                    withTimeout(10_000) { while (source.attemptsFor(0) < 1) delay(20) }
-                    downloader.stop() // page 0 waits 2 s to retry; stopping cancels the wait
+                    // the retry is counted before its 2 s wait, which the stop then cancels
+                    withTimeout(10_000) { while (ChapterDownloadStats.pageRetriesInProgress(c.chapterId) < 1) delay(20) }
+                    downloader.stop()
                 }
                 assertEquals(emptyList(), rows(source.id))
+                assertEquals(0, ChapterDownloadStats.pageRetriesInProgress(c.chapterId), "a stopped attempt forgets its retries")
             } finally {
                 scope.cancel()
             }
@@ -176,6 +180,31 @@ class DownloadAttemptRecordTest : ApplicationTest() {
             val row = rows(source.id).single()
             assertEquals(ChapterDownloadStats.OK, row.outcome)
             assertEquals(1, row.pageRetries)
+        }
+
+    /** A stop can land right after the chapter is marked downloaded, while its size is read; the row must still be written. */
+    @Test
+    fun `a stop arriving while a finished attempt is recorded doesn't lose its row`() =
+        withSource(pageCount = 2) { source, c ->
+            val timer = ChapterDownloadStats.AttemptTimer(DownloadQueueItem(c.chapterId, 1, c.mangaId, source.id, 2))
+            runBlocking {
+                launch {
+                    coroutineContext.job.cancel()
+                    timer.finished()
+                }.join()
+            }
+
+            assertEquals(listOf(ChapterDownloadStats.OK), rows(source.id).map { it.outcome })
+        }
+
+    @Test
+    fun `an attempt is recorded once, even if something fails after it finished`() =
+        withSource(pageCount = 2) { source, c ->
+            val timer = ChapterDownloadStats.AttemptTimer(DownloadQueueItem(c.chapterId, 1, c.mangaId, source.id, 2))
+            runBlocking { timer.finished() }
+            timer.failed(IllegalStateException("after the download"))
+
+            assertEquals(listOf(ChapterDownloadStats.OK), rows(source.id).map { it.outcome })
         }
 
     @Test

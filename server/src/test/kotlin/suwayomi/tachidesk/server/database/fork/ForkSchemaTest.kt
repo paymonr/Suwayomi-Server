@@ -32,6 +32,18 @@ class ForkSchemaTest : ApplicationTest() {
     }
 
     @Test
+    fun `download speeds over all sources have an index that starts with the start time`() {
+        val firstColumns =
+            transaction {
+                exec(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.INDEX_COLUMNS " +
+                        "WHERE LOWER(TABLE_NAME) = 'fork_chapter_download' AND ORDINAL_POSITION = 1",
+                ) { rs -> buildList { while (rs.next()) add(rs.getString(1).lowercase()) } }.orEmpty()
+            }
+        assertTrue("started_at" in firstColumns, firstColumns.toString())
+    }
+
+    @Test
     fun `applying again is harmless`() {
         ForkSchema.apply()
         ForkSchema.apply()

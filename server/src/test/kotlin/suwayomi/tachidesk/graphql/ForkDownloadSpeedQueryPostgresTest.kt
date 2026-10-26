@@ -11,4 +11,7 @@ class ForkDownloadSpeedQueryPostgresTest : PostgresTest() {
     @Test
     fun `downloadSpeedByDay answers per local day for one source`() =
         ForkDownloadSpeedQueryCases.answersPerDayForOneSource(System.nanoTime(), System.nanoTime())
+
+    @Test
+    fun `downloadSpeedBySource answers without until`() = ForkDownloadSpeedQueryCases.answersWithoutUntil(System.nanoTime())
 }

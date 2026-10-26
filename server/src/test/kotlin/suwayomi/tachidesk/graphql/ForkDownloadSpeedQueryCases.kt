@@ -84,6 +84,20 @@ internal object ForkDownloadSpeedQueryCases {
         assertEquals(listOf(3.0, 1.0), days(7).map { it["secondsPerPageMedian"] })
     }
 
+    /** suwayomi-dm asks with since alone. */
+    fun answersWithoutUntil(sourceId: Long) {
+        val now = System.currentTimeMillis()
+        ChapterDownloadStats.record(row(sourceId, now - 1_000, pages = 10, totalMs = 10_000, bytes = 1_000_000, listMs = 500))
+
+        val result = executeGraphQL("""{ downloadSpeedBySource(since: "${now - 60_000}") { sourceId chapters } }""")
+
+        assertEquals(emptyList(), result.errors)
+        val entry =
+            (result.dataAt("downloadSpeedBySource") as List<Map<String, Any?>>)
+                .single { it["sourceId"] == sourceId.toString() }
+        assertEquals(1, entry["chapters"])
+    }
+
     fun refusesDaysOutOfRange() {
         listOf(0, 366).forEach { n ->
             val result = executeGraphQL("""{ downloadSpeedByDay(sourceId: "1", days: $n) { day } }""")

@@ -13,5 +13,8 @@ class ForkDownloadSpeedQueryTest : ApplicationTest() {
         ForkDownloadSpeedQueryCases.answersPerDayForOneSource(System.nanoTime(), System.nanoTime())
 
     @Test
+    fun `downloadSpeedBySource answers without until`() = ForkDownloadSpeedQueryCases.answersWithoutUntil(System.nanoTime())
+
+    @Test
     fun `downloadSpeedByDay refuses days outside 1 to 365`() = ForkDownloadSpeedQueryCases.refusesDaysOutOfRange()
 }

@@ -12,4 +12,8 @@ class ChapterDownloadStatsPostgresTest : PostgresTest() {
 
     @Test
     fun `cuts a long outcome to fit`() = ChapterDownloadStatsCases.cutsALongOutcomeToFit(System.nanoTime())
+
+    @Test
+    fun `keeps an outcome with control characters or a split surrogate pair`() =
+        ChapterDownloadStatsCases.keepsAnOutcomeWithControlCharactersOrASplitPair(System.nanoTime())
 }

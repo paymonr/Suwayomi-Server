@@ -62,4 +62,14 @@ internal object ChapterDownloadStatsCases {
                 .outcome.length,
         )
     }
+
+    /** An extension's message can hold control characters (Postgres refuses NUL) or be cut inside a surrogate pair. */
+    fun keepsAnOutcomeWithControlCharactersOrASplitPair(sourceId: Long) {
+        ChapterDownloadStats.record(attempt(sourceId, 30_000, "bad\u0000byte\nline"))
+        ChapterDownloadStats.record(attempt(sourceId, 30_001, "x".repeat(ChapterDownloadStats.MAX_OUTCOME - 1) + "\uD83D\uDE00"))
+
+        val outcomes = ChapterDownloadStats.attempts(30_000, 30_002, sourceId).map { it.outcome }
+        assertEquals("bad byte line", outcomes[0])
+        assertEquals("x".repeat(ChapterDownloadStats.MAX_OUTCOME - 1), outcomes[1])
+    }
 }

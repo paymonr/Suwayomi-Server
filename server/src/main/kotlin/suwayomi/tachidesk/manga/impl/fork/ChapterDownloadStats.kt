@@ -2,6 +2,8 @@ package suwayomi.tachidesk.manga.impl.fork
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
@@ -27,6 +29,7 @@ object ChapterDownloadStats {
     /** Created by ForkSchema. */
     const val TABLE = "fork_chapter_download"
     const val SOURCE_STARTED_INDEX = "fork_chapter_download_source_started"
+    const val STARTED_INDEX = "fork_chapter_download_started"
 
     /** ForkSchema's columns for [TABLE]. No foreign keys: a fork table mustn't hold up an upstream migration. */
     const val COLUMNS =
@@ -101,7 +104,7 @@ object ChapterDownloadStats {
                     it[pagesFetched] = row.pagesFetched
                     it[bytes] = row.bytes
                     it[pageRetries] = row.pageRetries
-                    it[outcome] = row.outcome.take(MAX_OUTCOME)
+                    it[outcome] = cleanOutcome(row.outcome)
                 }
             }
         } catch (e: Exception) {
@@ -150,6 +153,15 @@ object ChapterDownloadStats {
         pagesFetched.computeIfAbsent(chapterId) { AtomicInteger() }.incrementAndGet()
     }
 
+    /** Page retries counted so far in the current attempt of [chapterId], for diagnostics and tests. */
+    fun pageRetriesInProgress(chapterId: Int): Int = pageRetries[chapterId]?.get() ?: 0
+
+    /** Milliseconds between two System.nanoTime() readings, capped to what an Int holds (24.8 days). */
+    internal fun elapsedMs(
+        startNanos: Long,
+        nowNanos: Long,
+    ): Int = ((nowNanos - startNanos) / 1_000_000).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+
     /** F9's page retry hook: one more retry in the current attempt of [chapterId]. */
     fun countPageRetry(chapterId: Int) {
         pageRetries.computeIfAbsent(chapterId) { AtomicInteger() }.incrementAndGet()
@@ -166,7 +178,16 @@ object ChapterDownloadStats {
                 ?.firstOrNull()
                 ?.trim()
                 .orEmpty()
-        return (if (line.isEmpty()) name else "$name: $line").take(MAX_OUTCOME)
+        return cleanOutcome(if (line.isEmpty()) name else "$name: $line")
+    }
+
+    /**
+     * [text] as stored: control characters (an extension's message can hold any, and Postgres refuses NUL) become
+     * spaces, and the cut to [MAX_OUTCOME] never leaves half a surrogate pair.
+     */
+    private fun cleanOutcome(text: String): String {
+        val cut = text.map { if (it.isISOControl()) ' ' else it }.joinToString("").take(MAX_OUTCOME)
+        return if (cut.isNotEmpty() && cut.last().isHighSurrogate()) cut.dropLast(1) else cut
     }
 
     /**
@@ -181,6 +202,7 @@ object ChapterDownloadStats {
         private val attempt = download.tries + 1
         private var listMs = NO_PAGE_LIST
         private var pages = 0
+        private var recorded = false
 
         init {
             pageRetries.remove(download.chapterId)
@@ -192,21 +214,34 @@ object ChapterDownloadStats {
             pages = pageCount.coerceAtLeast(0)
         }
 
+        /**
+         * The chapter is downloaded and marked so: a stop arriving now mustn't lose its row, so the size is read and the row
+         * written without heeding cancellation.
+         */
         suspend fun finished() =
-            neverThrows {
-                val bytes =
-                    try {
-                        ChapterDownloadHelper.getChapterArchiveSize(download.mangaId, download.chapterId)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        logger.warn(e) { "couldn't read the size of chapter ${download.chapterId}" }
-                        0L
-                    }
-                record(row(OK, bytes))
+            withContext(NonCancellable) {
+                neverThrows {
+                    val bytes =
+                        try {
+                            ChapterDownloadHelper.getChapterArchiveSize(download.mangaId, download.chapterId)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.warn(e) { "couldn't read the size of chapter ${download.chapterId}" }
+                            0L
+                        }
+                    recordOnce { row(OK, bytes) }
+                }
             }
 
-        fun failed(e: Throwable) = neverThrows { record(row(outcomeOf(e), 0)) }
+        fun failed(e: Throwable) = neverThrows { recordOnce { row(outcomeOf(e), 0) } }
+
+        /** One row per attempt: a failure after the attempt finished (e.g. in what runs next) isn't a second attempt. */
+        private inline fun recordOnce(row: () -> Attempt) {
+            if (recorded) return
+            recorded = true
+            record(row())
+        }
 
         /** Recording must never break a download; only a stop, and the JVM's own errors, get through. */
         private inline fun neverThrows(block: () -> Unit) {
@@ -226,7 +261,7 @@ object ChapterDownloadStats {
             pagesFetched.remove(download.chapterId)
         }
 
-        private fun elapsedMs() = ((System.nanoTime() - startNanos) / 1_000_000).toInt()
+        private fun elapsedMs() = elapsedMs(startNanos, System.nanoTime())
 
         private fun row(
             outcome: String,

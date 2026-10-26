@@ -3,6 +3,7 @@ package suwayomi.tachidesk.manga.impl.fork
 import org.junit.jupiter.api.Test
 import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
 import suwayomi.tachidesk.test.ApplicationTest
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ChapterDownloadStatsTest : ApplicationTest() {
@@ -14,6 +15,16 @@ class ChapterDownloadStatsTest : ApplicationTest() {
 
     @Test
     fun `cuts a long outcome to fit`() = ChapterDownloadStatsCases.cutsALongOutcomeToFit(System.nanoTime())
+
+    @Test
+    fun `keeps an outcome with control characters or a split surrogate pair`() =
+        ChapterDownloadStatsCases.keepsAnOutcomeWithControlCharactersOrASplitPair(System.nanoTime())
+
+    @Test
+    fun `elapsed time beyond what an Int holds is capped`() {
+        assertEquals(1_500, ChapterDownloadStats.elapsedMs(0, 1_500_000_000))
+        assertEquals(Int.MAX_VALUE, ChapterDownloadStats.elapsedMs(0, 30L * 86_400 * 1_000_000_000))
+    }
 
     /** Recording must never break a download: the downloader records a failure before it settles the chapter's state. */
     @Test

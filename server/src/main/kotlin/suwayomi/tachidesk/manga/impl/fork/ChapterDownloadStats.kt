@@ -44,6 +44,7 @@ object ChapterDownloadStats {
 
     private object ChapterDownloadTable : Table(TABLE) {
         val id = long("id").autoIncrement()
+
         // "source" would hide ColumnSet.source
         val sourceId = long("source")
         val manga = integer("manga")

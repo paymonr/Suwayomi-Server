@@ -55,7 +55,10 @@ internal object ChapterDownloadStatsCases {
 
         assertEquals(
             ChapterDownloadStats.MAX_OUTCOME,
-            ChapterDownloadStats.attempts(20_000, 20_001, sourceId).single().outcome.length,
+            ChapterDownloadStats
+                .attempts(20_000, 20_001, sourceId)
+                .single()
+                .outcome.length,
         )
     }
 }

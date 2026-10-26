@@ -73,7 +73,12 @@ internal object ForkDownloadSpeedQueryCases {
 
         val zone = ZoneId.systemDefault()
 
-        fun dayOf(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate().toString()
+        fun dayOf(ms: Long) =
+            Instant
+                .ofEpochMilli(ms)
+                .atZone(zone)
+                .toLocalDate()
+                .toString()
         assertEquals(listOf(dayOf(now - 1_000)), days(2).map { it["day"] })
         assertEquals(listOf(dayOf(threeDaysAgo), dayOf(now - 1_000)), days(7).map { it["day"] })
         assertEquals(listOf(3.0, 1.0), days(7).map { it["secondsPerPageMedian"] })

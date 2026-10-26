@@ -1,6 +1,7 @@
 package suwayomi.tachidesk.manga.impl.fork
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
@@ -10,6 +11,10 @@ import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import suwayomi.tachidesk.manga.impl.ChapterDownloadHelper
+import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Fork-only (download speeds): one row per chapter download attempt that finished or failed, so each source's download
@@ -127,4 +132,85 @@ object ChapterDownloadStats {
                     )
                 }
         }
+
+    /** Page retries of each chapter's current attempt; kept out of DownloadQueueItem so the queue's output doesn't change. */
+    private val pageRetries = ConcurrentHashMap<Int, AtomicInteger>()
+
+    /** F9's page retry hook: one more retry in the current attempt of [chapterId]. */
+    fun countPageRetry(chapterId: Int) {
+        pageRetries.computeIfAbsent(chapterId) { AtomicInteger() }.incrementAndGet()
+    }
+
+    /** A failed attempt's outcome: the exception's class and the first line of its message, cut to fit. */
+    fun outcomeOf(e: Throwable): String {
+        val name = e::class.simpleName ?: e.javaClass.name
+        val line =
+            e.message
+                ?.lineSequence()
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
+        return (if (line.isEmpty()) name else "$name: $line").take(MAX_OUTCOME)
+    }
+
+    /**
+     * Times one attempt of [download] from when the downloader starts it. [finished] or [failed] writes its row;
+     * [abandoned] (stopped, paused, dequeued) writes none.
+     */
+    class AttemptTimer(
+        private val download: DownloadQueueItem,
+    ) {
+        private val startedAt = System.currentTimeMillis()
+        private val startNanos = System.nanoTime()
+        private val attempt = download.tries + 1
+        private var listMs = NO_PAGE_LIST
+        private var pages = 0
+
+        init {
+            pageRetries.remove(download.chapterId)
+        }
+
+        fun pageListReady(pageCount: Int) {
+            listMs = elapsedMs()
+            pages = pageCount.coerceAtLeast(0)
+        }
+
+        suspend fun finished() {
+            val bytes =
+                try {
+                    ChapterDownloadHelper.getChapterArchiveSize(download.mangaId, download.chapterId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.warn(e) { "couldn't read the size of chapter ${download.chapterId}" }
+                    0L
+                }
+            record(row(OK, bytes))
+        }
+
+        fun failed(e: Throwable) = record(row(outcomeOf(e), 0))
+
+        fun abandoned() {
+            pageRetries.remove(download.chapterId)
+        }
+
+        private fun elapsedMs() = ((System.nanoTime() - startNanos) / 1_000_000).toInt()
+
+        private fun row(
+            outcome: String,
+            bytes: Long,
+        ) = Attempt(
+            sourceId = download.sourceId,
+            mangaId = download.mangaId,
+            chapterId = download.chapterId,
+            attempt = attempt,
+            startedAt = startedAt,
+            listMs = listMs,
+            totalMs = elapsedMs(),
+            pages = pages,
+            bytes = bytes,
+            pageRetries = pageRetries.remove(download.chapterId)?.get() ?: 0,
+            outcome = outcome,
+        )
+    }
 }

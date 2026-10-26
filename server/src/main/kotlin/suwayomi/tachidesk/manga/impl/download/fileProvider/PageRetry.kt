@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.network.HttpException
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import suwayomi.tachidesk.manga.impl.download.model.DownloadQueueItem
+import suwayomi.tachidesk.manga.impl.fork.ChapterDownloadStats
 import java.io.IOException
 import java.util.concurrent.CancellationException
 
@@ -63,6 +64,7 @@ fun pageRetryReporter(
     page: Int,
 ): (Int, Long, Exception) -> Unit =
     { retry, waitMs, cause ->
+        ChapterDownloadStats.countPageRetry(download.chapterId) // Fork (download speeds)
         logPageRetry(
             sourceId = download.sourceId,
             chapterId = download.chapterId,

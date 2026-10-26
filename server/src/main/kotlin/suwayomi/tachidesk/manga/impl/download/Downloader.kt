@@ -36,6 +36,7 @@ import suwayomi.tachidesk.manga.impl.download.model.DownloadUpdateType.FINISHED
 import suwayomi.tachidesk.manga.impl.download.model.DownloadUpdateType.PAUSED
 import suwayomi.tachidesk.manga.impl.download.model.DownloadUpdateType.PROGRESS
 import suwayomi.tachidesk.manga.impl.download.model.DownloadUpdateType.STOPPED
+import suwayomi.tachidesk.manga.impl.fork.ChapterDownloadStats
 import suwayomi.tachidesk.manga.impl.fork.ObsoleteDownloads
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import java.util.concurrent.CopyOnWriteArrayList
@@ -163,11 +164,15 @@ class Downloader(
                 break
             }
 
+            // Fork (download speeds): one fork_chapter_download row per attempt that finishes or fails
+            val timer = ChapterDownloadStats.AttemptTimer(download)
+
             try {
                 download.state = Downloading
                 step(PROGRESS, download, true)
 
                 val chapter = getChapterDownloadReadyById(download.chapterId)
+                timer.pageListReady(chapter.pageCount)
 
                 if (chapter.pageCount <= 0) {
                     throw EmptyChapterException()
@@ -187,27 +192,33 @@ class Downloader(
                         it[isDownloaded] = true
                     }
                 }
+                timer.finished()
                 // Fork (F16): a chapter-list sync may have left an older download of this chapter behind
                 ObsoleteDownloads.afterDownload(download.mangaId, download.chapterId)
                 finishDownload(downloadLogger, download)
             } catch (e: CancellationException) {
+                timer.abandoned()
                 downloadLogger.debug { "Downloader was stopped" }
                 availableSourceDownloads.filter { it.state == Downloading }.forEach { it.state = Queued }
                 notify(false, STOPPED, download)
             } catch (e: StopDownloadException) {
+                timer.abandoned()
                 downloadLogger.debug { "Download was dequeued" }
             } catch (e: PauseDownloadException) {
+                timer.abandoned()
                 downloadLogger.debug { "paused" }
                 download.state = Queued
                 notify(false, PAUSED, download)
             } catch (e: EmptyChapterException) {
                 downloadLogger.warn(e) { "failed due to" }
+                timer.failed(e)
                 download.failure = DownloadFailure.of(e)
                 download.tries = MAX_RETRIES
                 download.state = Error
                 notify(false, ERROR, download)
             } catch (e: Exception) {
                 downloadLogger.warn(e) { "failed due to" }
+                timer.failed(e)
                 download.failure = DownloadFailure.of(e)
                 download.tries++
                 download.state = Queued
